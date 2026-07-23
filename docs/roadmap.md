@@ -40,30 +40,43 @@ Every primitive has a manual backward pass, hand-computed fixtures, and
 finite-difference coverage. RMSNorm was intentionally deferred because
 LayerNorm satisfies the transformer normalization prerequisite.
 
-## Milestone 3 — Decoder-only transformer
+## Milestone 3 — Single-head causal self-attention
 
-Next planned step: build the smallest possible decoder-only transformer forward
-pass from the validated components, beginning with a single attention head and
-exhaustive forward/backward testing.
+Status: complete and verified.
 
-Then incrementally implement:
+- immutable broadcastable causal masks with explicit allowed/blocked semantics
+- stable masked softmax and an explicit vector-Jacobian product
+- token-wise query, key, and value projections
+- scaled dot-product scores and causal value aggregation
+- optional output projection
+- manual gradients for every matrix operation and all shared-input paths
+- exhaustive float64 finite differences for inputs and parameters
+- hand-calculated forward fixture
+- operational forward and backward causality checks
+- float32 checkpoint, optimizer, and clipping integration
+- deterministic embedding-to-attention inspection experiment
 
-- token embeddings
-- positional embeddings or rotary embeddings
-- causal masking
-- scaled dot-product attention
-- multi-head attention
-- residual connections
-- normalization
-- feed-forward network
-- vocabulary projection
-- cross-entropy training
-- autoregressive generation
-- manual backward passes for all operations
+This is one educational attention head, not a transformer block or language
+model.
 
-Start with tiny tensors that permit exhaustive finite-difference checks.
+## Milestone 4 — Minimal decoder block
 
-## Milestone 4 — Tokenization and training
+Next planned step: assemble a minimal pre-normalized decoder block using the
+validated single-head causal attention, residual connections, LayerNorm, and a
+two-layer feed-forward network. Validate the entire forward and backward path
+with tiny hand-computed fixtures and exhaustive finite differences before
+adding multi-head attention.
+
+After the single-head block is correct, add multi-head composition
+incrementally rather than combining new attention, residual, and feed-forward
+logic in one step.
+
+The later decoder assembly will also require token and position embeddings,
+vocabulary projection, N-dimensional cross-entropy training, and autoregressive
+generation. Each addition must retain explicit backward propagation and receive
+its own numerical validation.
+
+## Milestone 5 — Tokenization and training
 
 Add:
 
@@ -77,7 +90,7 @@ Add:
 
 Report compute, data, wall time, and validation methodology with every run.
 
-## Milestone 5 — Correctness reference
+## Milestone 6 — Correctness reference
 
 Only after the independent implementation works:
 
@@ -90,7 +103,7 @@ Only after the independent implementation works:
 
 The reference must not become the source of the manual implementation.
 
-## Milestone 6 — Local paper retrieval
+## Milestone 7 — Local paper retrieval
 
 Add:
 
@@ -105,7 +118,7 @@ Add:
 Do not implement a PDF parser from raw bytes. Evaluate extraction failures
 explicitly, especially multi-column ordering, scanned documents, and equations.
 
-## Milestone 7 — ML-paper specialization
+## Milestone 8 — ML-paper specialization
 
 Build a legally usable, versioned training and evaluation corpus from:
 
@@ -131,7 +144,7 @@ Target capabilities:
 - limitation analysis
 - reproduction planning
 
-## Milestone 8 — Evaluation
+## Milestone 9 — Evaluation
 
 Create a manually reviewed benchmark with:
 
@@ -156,7 +169,7 @@ Compare:
 Factuality evaluation must point to exact page-level evidence in the supplied
 paper. Record annotator instructions and disagreement.
 
-## Milestone 9 — Local application
+## Milestone 10 — Local application
 
 Build a lightweight local interface for:
 
@@ -171,7 +184,7 @@ Build a lightweight local interface for:
 
 Define the local privacy boundary and storage paths in the interface.
 
-## Milestone 10 — Performance optimization
+## Milestone 11 — Performance optimization
 
 Profile before optimizing. Potential targets include:
 

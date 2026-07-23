@@ -43,14 +43,15 @@ decorative feature.
 
 ## Implemented package boundaries
 
-Milestones 1 and 2 establish interfaces that later components can extend:
+Milestones 1 through 3 establish interfaces that later components can extend:
 
 - `tokenizer.py` owns text/token conversion and vocabulary persistence.
 - `data.py` owns local loading, chronological splits, examples, and seeded
   minibatches.
 - `losses.py` owns explicit numerical forward/backward primitives.
 - `nn/` owns explicit `Parameter`/`Module` foundations, initializers, layers,
-  activations, normalization, and sequential composition.
+  activations, normalization, sequential composition, causal masks, stable
+  masked softmax, and one single-head causal-attention module.
 - `optim/` owns optimizers over identity-keyed parameters.
 - `training/` owns global gradient clipping and generalized finite differences.
 - `models/` composes primitives into checkpointable models.
@@ -84,7 +85,34 @@ computation.
 
 See `docs/numerical_precision.md` for the project-wide float32/float64 policy.
 
-## Current model
+## Current attention architecture
+
+`CausalSelfAttentionHead` composes three independent `Linear` children for
+query, key, and value projections. An optional fourth `Linear` projects the
+value aggregate back to the input dimension. The default path is intentionally
+the smallest one:
+
+```text
+X ─┬─ Linear ─ Q ─┐
+   ├─ Linear ─ K ─┴─ scaled QKᵀ ─ causal masked softmax ─ A ─┐
+   └─ Linear ─ V ────────────────────────────────────────────┴─ A V ─ O
+```
+
+The broadcastable mask has shape `(1, T, T)` and uses `True` for allowed
+positions. Softmax computes its maximum and denominator from allowed entries
+only. Blocked probabilities and their score gradients are exactly zero.
+
+Backward propagation is manual at every stage: aggregation produces gradients
+for attention probabilities and values; masked-softmax backward produces score
+gradients; scaled score backward produces query and key gradients; and the
+three projection input gradients are explicitly summed. The optional output
+projection is differentiated first when enabled.
+
+This implementation materializes the complete score and probability matrices.
+It has no dropout, padding mask, multiple heads, residual path, decoder block,
+KV cache, or optimized kernel.
+
+## Current models
 
 The only language model still predicts the next character from the immediately
 preceding character:
@@ -102,6 +130,10 @@ Milestone 2 adds reusable mathematical components and a two-layer MLP. The XOR
 experiment demonstrates composition and manual backward correctness on four
 synthetic examples; it is not a language model and does not add paper
 understanding.
+
+Milestone 3 adds a single attention head and an inspection experiment. It
+validates causal information flow and the local derivatives needed by a future
+decoder, but it is not itself a sequence language model or transformer.
 
 ## Future module constraints
 

@@ -21,7 +21,7 @@ framework or automatic-differentiation system. This is an educational and
 engineering constraint, not a claim that a from-scratch model is automatically
 faster or more capable.
 
-## Current status: Milestone 2
+## Current status: Milestone 3
 
 Milestone 1 is complete and independently audited. Its character-level bigram
 learns a \(V\times V\) table of next-character logits and conditions only on
@@ -55,10 +55,31 @@ No automatic differentiation or external neural-network implementation is
 used. Every trainable operation contains an explicit backward formula connected
 to a derivation and numerical test.
 
+Milestone 3 implements the smallest causal-attention unit needed for the next
+stage:
+
+- an immutable boolean causal mask where `True` means allowed
+- stable masked softmax over valid entries only
+- an explicit masked-softmax backward pass
+- query, key, and value projections
+- scaled dot-product scores and weighted value aggregation
+- an optional output projection
+- manual gradients through every attention operation
+- exhaustive finite differences on tiny float64 inputs and parameters
+- forward and backward causality tests
+- checkpoint, optimizer, clipping, and float32 integration
+- a deterministic embedding-to-attention inspection experiment
+
+This is **one educational, unoptimized attention head only**. It is not
+multi-head attention, a transformer block, or a language model. It materializes
+the complete score matrix and has no dropout, padding mask, residual path, or
+KV cache.
+
 The project is **still not an SLM and not yet a research-paper assistant**. The
 bigram cannot understand a paper, explain an equation, retrieve evidence, or
 maintain context beyond one character. The MLP is a synthetic integration
-fixture, not a language model.
+fixture, and the attention head is a derivative and causality fixture; neither
+adds useful paper understanding.
 
 ## Installation
 
@@ -86,7 +107,9 @@ Tests cover serialization, deterministic data and generation, numerical
 stability, hand-calculated loss, finite-difference gradients, repeated-row
 gradient accumulation, 2D/3D layer behavior, LayerNorm, hand-computed optimizer
 trajectories, global clipping, nested module behavior, checkpoint identity,
-XOR learning, dtype policy, cache misuse, and malformed inputs.
+XOR learning, attention-mask semantics, extreme-logit masked softmax,
+hand-computed attention, forward/backward causality, every attention parameter
+gradient, dtype policy, cache misuse, and malformed inputs.
 
 ### Verified implementation
 
@@ -100,9 +123,10 @@ python3 -m ruff format --check .
 python3 -m pytest -q
 python3 experiments/train_bigram.py --config configs/bigram_small.json
 python3 experiments/train_mlp_xor.py
+python3 experiments/inspect_single_head_attention.py
 ```
 
-Ruff reported no lint or formatting errors, and pytest reported `90 passed`.
+Ruff reported no lint or formatting errors, and pytest reported `132 passed`.
 The 300-step fallback-corpus smoke run used 2,094 training examples, 232
 validation examples, a 23-character vocabulary, and 529 parameters. Its best
 sampled validation loss was `1.5488034950125846` (perplexity
@@ -114,6 +138,14 @@ The 42-parameter XOR MLP reduced mean cross-entropy from
 steps and predicted `[0, 1, 1, 0]`. Its reloaded checkpoint reproduced logits
 bit-for-bit. This demonstrates correctness on four deterministic synthetic
 examples only.
+
+The 55-parameter deterministic attention inspection reported exact tensor
+shapes, scaled scores, the causal mask, probabilities, synthetic loss, and
+input/Q/K/V gradient norms. Its synthetic loss was `1.3372998086757004`, and
+all future-token probabilities were exactly zero. Its measured values are
+recorded in the
+[Milestone 2 attention-readiness audit](docs/audits/milestone_2_attention_readiness_audit.md);
+this is a mathematical inspection, not a quality or performance benchmark.
 
 ## Training
 
@@ -166,6 +198,26 @@ The script supports `--seed`, `--steps`, `--learning-rate`, `--hidden-dim`,
 `--report-interval`, and `--output-directory`. It is a correctness
 demonstration, not a capability benchmark.
 
+## Single-head attention inspection
+
+Run a deterministic token-ID → embedding → causal-attention forward/backward
+calculation:
+
+```bash
+python3 experiments/inspect_single_head_attention.py
+```
+
+The script prints the input, Q/K/V, score, probability, and output shapes along
+with raw scaled scores, the causal allowed mask, attention probabilities, a
+synthetic scalar loss, and gradient norms. It asserts that every future-token
+probability is exactly zero and writes:
+
+```text
+outputs/attention_inspection/run_summary.json
+```
+
+The output directory is ignored by Git. This experiment does not train a model.
+
 ## Example generation
 
 ```python
@@ -199,16 +251,16 @@ configs/                 Reproducible experiment configurations
 data/                    Ignored local raw and processed data
 docs/
   architecture.md        Intended retrieval-plus-model system
-  roadmap.md             Ten explicit project milestones
+  roadmap.md             Explicit incremental project milestones
   numerical_precision.md Float32/float64 policy
   audits/                 Evidence-backed milestone audits
   derivations/           Math connected to source functions
-experiments/             CLI training composition
+experiments/             Reproducible training and inspection scripts
 src/localml_scholar/
   data.py                 Local loading, splits, examples, minibatches
   tokenizer.py            Character tokenizer
   losses.py               N-D stable softmax and indexed cross-entropy
-  nn/                     Parameters, modules, layers, and composition
+  nn/                     Layers, modules, masks, and one attention head
   optim/                  SGD, momentum, and Adam
   training/               Gradient clipping and finite differences
   optimizers.py           Milestone 1 compatibility SGD
@@ -228,7 +280,9 @@ Mathematical details are in:
 - [LayerNorm](docs/derivations/layer_normalization.md)
 - [optimizers and clipping](docs/derivations/optimizers.md)
 - [generalized gradient checking](docs/derivations/gradient_checking.md)
+- [single-head causal attention](docs/derivations/single_head_causal_attention.md)
 - [Milestone 1 audit](docs/audits/milestone_1_audit.md)
+- [Milestone 2 attention-readiness audit](docs/audits/milestone_2_attention_readiness_audit.md)
 
 ## Limitations
 
@@ -246,20 +300,23 @@ Mathematical details are in:
 - Exact GELU uses standard-library scalar `erf`; it prioritizes transparent
   mathematics over throughput.
 - LayerNorm is implemented, but RMSNorm is not.
-- Milestone 2 has no attention, causal masking, residual block, sequence model,
-  or language-model training path.
+- Milestone 3 has one attention head, but no multi-head composition, padding
+  mask, dropout, residual block, sequence model, or language-model training
+  path.
+- Attention uses \(O(T^2)\) score/probability storage and has no KV cache or
+  optimized kernel.
 - The fallback corpus exists only for tests and smoke runs. It is not useful
   training data.
 - Generated bigram text should not be interpreted as meaningful language.
 
 ## Roadmap
 
-The next milestone is the smallest possible decoder-only transformer forward
-pass built from the validated components, beginning with a single attention
-head and exhaustive forward/backward testing. It will be expanded only after
-that minimal path is numerically correct. Local PDF parsing, retrieval,
-licensed ML-paper specialization, evidence-based evaluation, an application,
-and measured performance work remain later milestones.
+The next milestone is a minimal pre-normalized decoder block built from the
+validated single-head attention, residual connections, LayerNorm, and a
+two-layer feed-forward network. The complete block will be validated before
+multi-head attention is added. Local PDF parsing, retrieval, licensed ML-paper
+specialization, evidence-based evaluation, an application, and measured
+performance work remain later milestones.
 
 See [the full roadmap](docs/roadmap.md) and
 [the architecture](docs/architecture.md).
