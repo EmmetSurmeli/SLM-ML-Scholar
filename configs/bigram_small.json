@@ -1,0 +1,14 @@
+{
+  "seed": 7,
+  "train_fraction": 0.9,
+  "batch_size": 32,
+  "learning_rate": 1.0,
+  "weight_decay": 0.0,
+  "num_steps": 300,
+  "evaluation_interval": 50,
+  "evaluation_batches": 10,
+  "generation_length": 120,
+  "sampling_temperature": 0.9,
+  "checkpoint_directory": "outputs/bigram_small"
+}
+
