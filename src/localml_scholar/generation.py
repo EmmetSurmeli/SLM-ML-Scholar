@@ -20,9 +20,13 @@ def sample_next_token(
     greedy: bool = False,
 ) -> int:
     """Choose one token from a one-dimensional logit vector."""
-    values = np.asarray(logits, dtype=np.float64)
+    values = np.asarray(logits)
     if values.ndim != 1 or values.size == 0:
         raise ValueError(f"logits must be a non-empty 1D array, got {values.shape}.")
+    if not np.issubdtype(values.dtype, np.floating):
+        raise TypeError(f"logits must have a floating-point dtype, got {values.dtype}.")
+    if values.dtype not in (np.dtype(np.float32), np.dtype(np.float64)):
+        raise TypeError(f"logits must use float32 or float64, got {values.dtype}.")
     if not np.all(np.isfinite(values)):
         raise ValueError("logits must contain only finite values.")
     if not isinstance(rng, np.random.Generator):

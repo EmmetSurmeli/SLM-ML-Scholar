@@ -2,8 +2,10 @@
 
 from __future__ import annotations
 
+import json
 from collections.abc import Mapping
 from pathlib import Path
+from typing import Any
 
 import numpy as np
 from numpy.typing import NDArray
@@ -24,7 +26,7 @@ class BigramLanguageModel:
     token ``i``. Repeated input IDs accumulate into the same gradient row.
     """
 
-    CHECKPOINT_VERSION = 1
+    CHECKPOINT_VERSION = 2
 
     def __init__(
         self,
@@ -69,6 +71,14 @@ class BigramLanguageModel:
     def parameter_count(self) -> int:
         """Return the total number of scalar trainable parameters."""
         return int(self.weights.size)
+
+    @property
+    def configuration(self) -> dict[str, Any]:
+        """Return the model configuration needed for reconstruction."""
+        return {
+            "vocabulary_size": self.vocabulary_size,
+            "dtype": self.weights.dtype.name,
+        }
 
     def train(self) -> BigramLanguageModel:
         """Switch to training mode and return ``self``."""
@@ -133,11 +143,18 @@ class BigramLanguageModel:
     ) -> None:
         """Accumulate logit gradients into the selected weight rows."""
         inputs = self._validate_token_ids(input_ids, "input_ids")
-        gradient = np.asarray(grad_logits, dtype=np.float64)
+        gradient = np.asarray(grad_logits)
         expected_shape = (inputs.size, self.vocabulary_size)
         if gradient.shape != expected_shape:
             raise ValueError(
                 f"grad_logits must have shape {expected_shape}, got {gradient.shape}."
+            )
+        if not np.issubdtype(gradient.dtype, np.floating):
+            raise TypeError("grad_logits must have a floating-point dtype.")
+        if gradient.dtype != self.weights.dtype:
+            raise TypeError(
+                f"grad_logits dtype {gradient.dtype} does not match model "
+                f"dtype {self.weights.dtype}."
             )
         if not np.all(np.isfinite(gradient)):
             raise ValueError("grad_logits must contain only finite values.")
@@ -167,7 +184,7 @@ class BigramLanguageModel:
         return loss
 
     def save_checkpoint(self, path: str | Path) -> Path:
-        """Save weights and minimal format metadata in an uncompressed NPZ."""
+        """Save versioned model configuration and weights in NPZ."""
         destination = Path(path)
         if destination.suffix != ".npz":
             raise ValueError("Checkpoint path must end with '.npz'.")
@@ -175,6 +192,9 @@ class BigramLanguageModel:
         np.savez(
             destination,
             checkpoint_version=np.array(self.CHECKPOINT_VERSION, dtype=np.int64),
+            model_config_json=np.asarray(
+                json.dumps(self.configuration, sort_keys=True)
+            ),
             weights=self.weights,
         )
         return destination
@@ -185,18 +205,34 @@ class BigramLanguageModel:
         source = Path(path)
         try:
             with np.load(source, allow_pickle=False) as checkpoint:
-                if set(checkpoint.files) != {"checkpoint_version", "weights"}:
-                    raise ValueError(
-                        "Checkpoint must contain exactly checkpoint_version "
-                        "and weights."
-                    )
+                if "checkpoint_version" not in checkpoint.files:
+                    raise ValueError("Checkpoint is missing checkpoint_version.")
                 version = int(checkpoint["checkpoint_version"])
-                weights = np.asarray(checkpoint["weights"], dtype=np.float64)
+                if version == 1:
+                    expected_files = {"checkpoint_version", "weights"}
+                    configuration = None
+                elif version == cls.CHECKPOINT_VERSION:
+                    expected_files = {
+                        "checkpoint_version",
+                        "model_config_json",
+                        "weights",
+                    }
+                    try:
+                        configuration = json.loads(str(checkpoint["model_config_json"]))
+                    except json.JSONDecodeError as error:
+                        raise ValueError(
+                            "Checkpoint model configuration is not valid JSON."
+                        ) from error
+                else:
+                    raise ValueError(f"Unsupported checkpoint version: {version}.")
+                if set(checkpoint.files) != expected_files:
+                    raise ValueError(
+                        f"Checkpoint version {version} has unexpected fields."
+                    )
+                weights = np.asarray(checkpoint["weights"])
         except FileNotFoundError:
             raise FileNotFoundError(f"Checkpoint does not exist: {source}") from None
 
-        if version != cls.CHECKPOINT_VERSION:
-            raise ValueError(f"Unsupported checkpoint version: {version}.")
         if (
             weights.ndim != 2
             or weights.shape[0] == 0
@@ -206,8 +242,20 @@ class BigramLanguageModel:
                 f"Checkpoint weights must be a non-empty square matrix, got "
                 f"{weights.shape}."
             )
+        if weights.dtype != np.float64:
+            raise TypeError(
+                f"Checkpoint weights must use float64, got {weights.dtype}."
+            )
         if not np.all(np.isfinite(weights)):
             raise ValueError("Checkpoint weights contain non-finite values.")
+        expected_configuration = {
+            "vocabulary_size": int(weights.shape[0]),
+            "dtype": weights.dtype.name,
+        }
+        if configuration is not None and configuration != expected_configuration:
+            raise ValueError(
+                "Checkpoint model configuration does not match its weights."
+            )
 
         model = cls(weights.shape[0], initialization_scale=0.0)
         model.weights[...] = weights

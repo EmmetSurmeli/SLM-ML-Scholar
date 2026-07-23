@@ -5,6 +5,7 @@ from localml_scholar.losses import (
     multiclass_cross_entropy,
     softmax_cross_entropy_backward,
     softmax_cross_entropy_forward,
+    softmax_cross_entropy_loss_and_gradient,
     stable_softmax,
 )
 
@@ -25,6 +26,16 @@ def test_softmax_is_finite_for_large_logits() -> None:
 
     assert np.all(np.isfinite(probabilities))
     assert np.allclose(probabilities.sum(axis=1), 1.0)
+
+
+def test_softmax_handles_opposite_float_limits_without_warning() -> None:
+    maximum = np.finfo(np.float64).max
+    logits = np.array([[maximum, -maximum]], dtype=np.float64)
+
+    with np.errstate(all="raise"):
+        probabilities = stable_softmax(logits)
+
+    assert np.array_equal(probabilities, np.array([[1.0, 0.0]]))
 
 
 def test_cross_entropy_matches_hand_calculation() -> None:
@@ -67,8 +78,41 @@ def test_analytical_logits_gradient_matches_finite_differences() -> None:
     assert np.allclose(analytical, numerical, rtol=1e-6, atol=1e-7)
 
 
+def test_language_model_shapes_are_flattened_over_leading_dimensions() -> None:
+    logits = np.array(
+        [
+            [[2.0, 0.0], [0.0, 2.0]],
+            [[1.0, -1.0], [-1.0, 1.0]],
+        ],
+        dtype=np.float64,
+    )
+    targets = np.array([[0, 1], [0, 1]], dtype=np.int64)
+
+    loss, gradient = softmax_cross_entropy_loss_and_gradient(logits, targets)
+    flat_loss, flat_gradient = softmax_cross_entropy_loss_and_gradient(
+        logits.reshape(-1, 2), targets.reshape(-1)
+    )
+
+    assert loss == pytest.approx(flat_loss)
+    assert gradient.shape == logits.shape
+    assert np.allclose(gradient.reshape(-1, 2), flat_gradient)
+
+
+def test_loss_preserves_float32_and_rejects_integer_logits() -> None:
+    logits = np.array([[1.0, 2.0]], dtype=np.float32)
+    targets = np.array([1], dtype=np.int64)
+
+    _, probabilities = softmax_cross_entropy_forward(logits, targets)
+    gradient = softmax_cross_entropy_backward(probabilities, targets)
+
+    assert probabilities.dtype == np.float32
+    assert gradient.dtype == np.float32
+    with pytest.raises(TypeError, match="floating-point dtype"):
+        stable_softmax(np.array([1, 2], dtype=np.int64))
+
+
 def test_malformed_loss_shapes_raise_useful_errors() -> None:
-    with pytest.raises(ValueError, match=r"shape \(batch, classes\)"):
+    with pytest.raises(ValueError, match="at least 2 dimensions"):
         softmax_cross_entropy_forward(np.zeros(3), np.array([0], dtype=np.int64))
     with pytest.raises(ValueError, match="targets must have shape"):
         softmax_cross_entropy_forward(np.zeros((2, 3)), np.array([0], dtype=np.int64))

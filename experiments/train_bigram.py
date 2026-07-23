@@ -122,9 +122,13 @@ def evaluate(
     evaluation_batches: int,
 ) -> float:
     """Estimate mean loss across a fixed number of sampled minibatches."""
+    was_training = model.training
     model.eval()
-    losses = [model.loss(*sampler.next_batch()) for _ in range(evaluation_batches)]
-    model.train()
+    try:
+        losses = [model.loss(*sampler.next_batch()) for _ in range(evaluation_batches)]
+    finally:
+        if was_training:
+            model.train()
     return float(np.mean(losses))
 
 

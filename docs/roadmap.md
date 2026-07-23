@@ -7,7 +7,7 @@ its forward pass runs.
 
 ## Milestone 1 — Bigram baseline
 
-Status: implemented in the initial repository foundation.
+Status: complete and audited.
 
 - Deterministic character tokenizer and local chronological data pipeline
 - Stable softmax, indexed cross-entropy, and manual combined gradient
@@ -21,25 +21,32 @@ This is an educational systems baseline, not a paper assistant or an SLM.
 
 ## Milestone 2 — Neural-network foundations
 
-Implement manually:
+Status: complete and verified.
 
-- dense layers
-- embeddings
-- ReLU
-- GELU
-- RMSNorm or LayerNorm
-- SGD
-- momentum
-- Adam
-- gradient clipping
-- finite-difference validation for every primitive and composition
+- explicit `Parameter` and deterministic recursive `Module` registration
+- dense layers over arbitrary leading dimensions
+- token/position-ready embeddings with repeated-index accumulation
+- ReLU and exact \(x\Phi(x)\) GELU
+- population-variance LayerNorm
+- Sequential composition and a two-layer MLP
+- coupled-decay SGD, classical momentum, and bias-corrected Adam
+- scaled global gradient norm and clipping
+- generalized input/parameter finite-difference validation
+- explicit float32/float64 policy
+- versioned model and optimizer checkpoints
+- deterministic XOR integration demonstration
 
-Define explicit cache ownership and gradient-buffer conventions before building
-attention.
+Every primitive has a manual backward pass, hand-computed fixtures, and
+finite-difference coverage. RMSNorm was intentionally deferred because
+LayerNorm satisfies the transformer normalization prerequisite.
 
 ## Milestone 3 — Decoder-only transformer
 
-Implement:
+Next planned step: build the smallest possible decoder-only transformer forward
+pass from the validated components, beginning with a single attention head and
+exhaustive forward/backward testing.
+
+Then incrementally implement:
 
 - token embeddings
 - positional embeddings or rotary embeddings
@@ -188,4 +195,3 @@ Any claim of outperforming PyTorch must report:
 - latency distribution
 - numerical tolerance
 - whether PyTorch eager and `torch.compile` were tested
-

@@ -1,61 +1,70 @@
-"""Numerically stable classification losses implemented with NumPy."""
+"""Numerically stable indexed classification losses implemented with NumPy."""
 
 from __future__ import annotations
 
 import numpy as np
-from numpy.typing import NDArray
+from numpy.typing import ArrayLike, NDArray
 
-FloatArray = NDArray[np.float64]
-IntArray = NDArray[np.int64]
+FloatArray = NDArray[np.floating]
+IntArray = NDArray[np.integer]
 
 
-def _validate_logits(logits: NDArray[np.floating]) -> FloatArray:
-    array = np.asarray(logits, dtype=np.float64)
-    if array.ndim not in (1, 2):
-        raise ValueError(f"logits must be 1D or 2D, received shape {array.shape}.")
+def _validate_floating_array(
+    values: ArrayLike,
+    name: str,
+    *,
+    minimum_dimensions: int,
+) -> FloatArray:
+    array = np.asarray(values)
+    if not np.issubdtype(array.dtype, np.floating):
+        raise TypeError(f"{name} must have a floating-point dtype, got {array.dtype}.")
+    if array.dtype not in (np.dtype(np.float32), np.dtype(np.float64)):
+        raise TypeError(f"{name} must use float32 or float64, got {array.dtype}.")
+    if array.ndim < minimum_dimensions:
+        raise ValueError(
+            f"{name} must have at least {minimum_dimensions} dimensions, "
+            f"got shape {array.shape}."
+        )
     if array.size == 0 or array.shape[-1] == 0:
-        raise ValueError("logits must be non-empty.")
+        raise ValueError(f"{name} must be non-empty.")
     if not np.all(np.isfinite(array)):
-        raise ValueError("logits must contain only finite values.")
+        raise ValueError(f"{name} must contain only finite values.")
     return array
 
 
-def _validate_batch(
-    values: NDArray[np.floating],
-    targets: NDArray[np.integer],
+def _validate_classification(
+    values: ArrayLike,
+    targets: ArrayLike,
     value_name: str,
 ) -> tuple[FloatArray, IntArray]:
-    array = np.asarray(values, dtype=np.float64)
+    array = _validate_floating_array(values, value_name, minimum_dimensions=2)
     target_array = np.asarray(targets)
-    if array.ndim != 2:
+    expected_target_shape = array.shape[:-1]
+    if target_array.shape != expected_target_shape:
         raise ValueError(
-            f"{value_name} must have shape (batch, classes), got {array.shape}."
-        )
-    if array.shape[0] == 0 or array.shape[1] == 0:
-        raise ValueError(f"{value_name} must have non-zero batch and class axes.")
-    if target_array.ndim != 1 or target_array.shape[0] != array.shape[0]:
-        raise ValueError(
-            f"targets must have shape ({array.shape[0]},), got {target_array.shape}."
+            f"targets must have shape {expected_target_shape}, "
+            f"got {target_array.shape}."
         )
     if not np.issubdtype(target_array.dtype, np.integer):
         raise TypeError("targets must contain integer class indices.")
-    normalized_targets = target_array.astype(np.int64, copy=False)
-    if np.any(normalized_targets < 0) or np.any(normalized_targets >= array.shape[1]):
+    if target_array.size == 0:
+        raise ValueError("targets must be non-empty.")
+    if np.any(target_array < 0) or np.any(target_array >= array.shape[-1]):
         raise ValueError(
-            f"targets must be in [0, {array.shape[1]}), received "
-            f"range [{normalized_targets.min()}, {normalized_targets.max()}]."
+            f"targets must be in [0, {array.shape[-1]}), received "
+            f"range [{int(target_array.min())}, {int(target_array.max())}]."
         )
-    return array, normalized_targets
+    return array, target_array
 
 
-def stable_softmax(logits: NDArray[np.floating]) -> FloatArray:
-    """Compute softmax after subtracting the row maximum.
-
-    One-dimensional input produces one probability vector. Two-dimensional
-    input is normalized independently across the final (class) axis.
-    """
-    array = _validate_logits(logits)
-    shifted = array - np.max(array, axis=-1, keepdims=True)
+def stable_softmax(logits: ArrayLike) -> FloatArray:
+    """Compute softmax over the final dimension without changing dtype."""
+    array = _validate_floating_array(logits, "logits", minimum_dimensions=1)
+    # For opposite-sign values near float64 limits, the exact difference is
+    # below -max_float and represents as -inf. exp(-inf)=0 is the correct
+    # limiting probability, so suppress only that expected overflow warning.
+    with np.errstate(over="ignore", invalid="raise"):
+        shifted = array - np.max(array, axis=-1, keepdims=True)
     exponentials = np.exp(shifted)
     denominator = np.sum(exponentials, axis=-1, keepdims=True)
     probabilities = exponentials / denominator
@@ -65,55 +74,73 @@ def stable_softmax(logits: NDArray[np.floating]) -> FloatArray:
 
 
 def multiclass_cross_entropy(
-    probabilities: NDArray[np.floating],
-    targets: NDArray[np.integer],
+    probabilities: ArrayLike,
+    targets: ArrayLike,
 ) -> float:
-    """Return mean indexed cross-entropy without constructing one-hot targets."""
-    values, target_array = _validate_batch(probabilities, targets, "probabilities")
-    if not np.all(np.isfinite(values)):
-        raise ValueError("probabilities must contain only finite values.")
+    """Return mean indexed cross-entropy for 2D or higher probabilities."""
+    values, target_array = _validate_classification(
+        probabilities, targets, "probabilities"
+    )
     if np.any(values < 0.0) or np.any(values > 1.0):
         raise ValueError("probabilities must lie in [0, 1].")
-    if not np.allclose(values.sum(axis=1), 1.0, rtol=1e-7, atol=1e-9):
-        raise ValueError("Every probability row must sum to one.")
+    if not np.allclose(values.sum(axis=-1), 1.0, rtol=1e-6, atol=1e-7):
+        raise ValueError("Every probability vector must sum to one.")
 
-    selected = values[np.arange(values.shape[0]), target_array]
+    flat_values = values.reshape(-1, values.shape[-1])
+    flat_targets = target_array.reshape(-1)
+    selected = flat_values[np.arange(flat_targets.size), flat_targets]
     with np.errstate(divide="ignore"):
         losses = -np.log(selected)
     return float(np.mean(losses))
 
 
 def softmax_cross_entropy_forward(
-    logits: NDArray[np.floating],
-    targets: NDArray[np.integer],
+    logits: ArrayLike,
+    targets: ArrayLike,
 ) -> tuple[float, FloatArray]:
-    """Return stable mean cross-entropy and softmax probabilities."""
-    values, target_array = _validate_batch(logits, targets, "logits")
-    if not np.all(np.isfinite(values)):
-        raise ValueError("logits must contain only finite values.")
+    """Return stable mean cross-entropy and same-shaped probabilities.
 
-    shifted = values - np.max(values, axis=1, keepdims=True)
+    The final logits dimension is the class axis. Targets must match every
+    leading logits dimension.
+    """
+    values, target_array = _validate_classification(logits, targets, "logits")
+    class_count = values.shape[-1]
+    flat_values = values.reshape(-1, class_count)
+    flat_targets = target_array.reshape(-1)
+    with np.errstate(over="ignore", invalid="raise"):
+        shifted = flat_values - np.max(flat_values, axis=1, keepdims=True)
     log_normalizers = np.log(np.sum(np.exp(shifted), axis=1))
-    selected_shifted_logits = shifted[np.arange(values.shape[0]), target_array]
+    selected_shifted_logits = shifted[np.arange(flat_targets.size), flat_targets]
     loss = np.mean(log_normalizers - selected_shifted_logits)
-    probabilities = np.exp(shifted - log_normalizers[:, None])
-    return float(loss), probabilities
+    flat_probabilities = np.exp(shifted - log_normalizers[:, None])
+    return float(loss), flat_probabilities.reshape(values.shape)
 
 
 def softmax_cross_entropy_backward(
-    probabilities: NDArray[np.floating],
-    targets: NDArray[np.integer],
+    probabilities: ArrayLike,
+    targets: ArrayLike,
 ) -> FloatArray:
-    """Return ``(probabilities - one_hot(targets)) / batch_size``."""
-    values, target_array = _validate_batch(probabilities, targets, "probabilities")
-    if not np.all(np.isfinite(values)):
-        raise ValueError("probabilities must contain only finite values.")
+    """Return ``(probabilities - one_hot(targets)) / example_count``."""
+    values, target_array = _validate_classification(
+        probabilities, targets, "probabilities"
+    )
     if np.any(values < 0.0) or np.any(values > 1.0):
         raise ValueError("probabilities must lie in [0, 1].")
-    if not np.allclose(values.sum(axis=1), 1.0, rtol=1e-7, atol=1e-9):
-        raise ValueError("Every probability row must sum to one.")
+    if not np.allclose(values.sum(axis=-1), 1.0, rtol=1e-6, atol=1e-7):
+        raise ValueError("Every probability vector must sum to one.")
 
-    gradient = values.copy()
-    gradient[np.arange(values.shape[0]), target_array] -= 1.0
-    gradient /= values.shape[0]
-    return gradient
+    flat_gradient = values.reshape(-1, values.shape[-1]).copy()
+    flat_targets = target_array.reshape(-1)
+    flat_gradient[np.arange(flat_targets.size), flat_targets] -= 1.0
+    flat_gradient /= np.asarray(flat_targets.size, dtype=values.dtype)
+    return flat_gradient.reshape(values.shape)
+
+
+def softmax_cross_entropy_loss_and_gradient(
+    logits: ArrayLike,
+    targets: ArrayLike,
+) -> tuple[float, FloatArray]:
+    """Return mean loss and its analytical gradient with respect to logits."""
+    loss, probabilities = softmax_cross_entropy_forward(logits, targets)
+    gradient = softmax_cross_entropy_backward(probabilities, targets)
+    return loss, gradient

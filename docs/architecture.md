@@ -41,32 +41,53 @@ The final answer layer should distinguish retrieved statements, model
 inferences, and uncertainty. Page citations are a product requirement, not a
 decorative feature.
 
-## Milestone 1 boundaries
+## Implemented package boundaries
 
-The current package establishes small interfaces that later components can
-extend:
+Milestones 1 and 2 establish interfaces that later components can extend:
 
 - `tokenizer.py` owns text/token conversion and vocabulary persistence.
 - `data.py` owns local loading, chronological splits, examples, and seeded
   minibatches.
 - `losses.py` owns explicit numerical forward/backward primitives.
-- `models/` owns parameters, forward computation, gradient accumulation,
-  modes, and checkpoints.
-- `optimizers.py` updates named parameter arrays and validates gradients.
+- `nn/` owns explicit `Parameter`/`Module` foundations, initializers, layers,
+  activations, normalization, and sequential composition.
+- `optim/` owns optimizers over identity-keyed parameters.
+- `training/` owns global gradient clipping and generalized finite differences.
+- `models/` composes primitives into checkpointable models.
+- `optimizers.py` remains the Milestone 1 named-array SGD compatibility path.
 - `generation.py` owns autoregressive sampling independently of training.
-- `utils.py` owns reproducibility, reporting math, and gradient checking.
+- `utils.py` owns reproducibility, reporting math, and the bigram-specific
+  compatibility gradient check.
 - `experiments/` composes library pieces into reproducible runs but is not
   imported by the reusable model.
 
-For the bigram model, the parameter and gradient mappings each contain one
-matrix named `weights`. A future transformer will expose many named arrays
-through the same conceptual boundary. Optimizer state can then grow without
-putting update rules inside layers.
+The bigram model retains its original one-matrix interface. New neural modules
+register lightweight `Parameter` objects explicitly. Recursive enumeration
+produces deterministic dotted names such as `network.0.weight`, while
+optimizer state is keyed to parameter identity rather than a name.
+
+## Manual backward and cache contract
+
+There is no dynamic automatic-differentiation graph. Each trainable operation
+implements its own backward formula.
+
+In training mode, a primitive layer supports exactly one unmatched cached
+forward. Backward consumes that cache. A second forward or mode transition
+while the cache is pending raises an informative error. This makes accidental
+cache overwrite and unsupported reuse of one layer instance explicit.
+`Sequential` rejects duplicate child instances and runs backward in reverse
+order.
+
+Evaluation forwards do not cache and may be repeated, but cannot be followed
+by backward. `clear_cache` exists only for explicit recovery after an abandoned
+computation.
+
+See `docs/numerical_precision.md` for the project-wide float32/float64 policy.
 
 ## Current model
 
-Milestone 1 predicts the next character from only the immediately preceding
-character:
+The only language model still predicts the next character from the immediately
+preceding character:
 
 \[
 P(x_{t+1}\mid x_t).
@@ -77,6 +98,11 @@ Its value is as an end-to-end correctness baseline for tokenization, dataset
 isolation, loss math, manual gradients, optimization, generation, persistence,
 and experiment bookkeeping.
 
+Milestone 2 adds reusable mathematical components and a two-layer MLP. The XOR
+experiment demonstrates composition and manual backward correctness on four
+synthetic examples; it is not a language model and does not add paper
+understanding.
+
 ## Future module constraints
 
 The core neural-network path will continue to use Python, NumPy array storage
@@ -85,4 +111,3 @@ automatic differentiation, framework layers, framework losses, framework
 optimizers, pretrained-model APIs, or external tokenizers. PDF parsing,
 plotting, tests, and the application will stay outside that core and may use
 focused third-party libraries when their value is clear.
-

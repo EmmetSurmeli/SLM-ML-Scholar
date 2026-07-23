@@ -76,6 +76,9 @@ def test_checkpoint_round_trip_preserves_outputs_exactly(tmp_path) -> None:
 
     assert np.array_equal(loaded.forward(inputs), expected)
     assert loaded.parameter_count == model.parameter_count
+    assert loaded.configuration == model.configuration
+    with np.load(checkpoint, allow_pickle=False) as saved:
+        assert "model_config_json" in saved.files
 
 
 def test_optimizer_rejects_bad_gradient_shape_and_nonfinite_values() -> None:
@@ -86,6 +89,8 @@ def test_optimizer_rejects_bad_gradient_shape_and_nonfinite_values() -> None:
         optimizer.step({"weights": np.zeros((2, 3))})
     with pytest.raises(ValueError, match="non-finite"):
         optimizer.step({"weights": np.full((2, 2), np.nan)})
+    with pytest.raises(TypeError, match="does not match"):
+        optimizer.step({"weights": np.zeros((2, 2), dtype=np.float32)})
 
 
 def test_model_rejects_malformed_token_and_gradient_shapes() -> None:

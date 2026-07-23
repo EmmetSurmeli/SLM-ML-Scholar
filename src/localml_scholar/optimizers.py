@@ -29,6 +29,11 @@ class SGD:
                 raise TypeError(f"Parameter {name!r} must be a NumPy array.")
             if not np.issubdtype(parameter.dtype, np.floating):
                 raise TypeError(f"Parameter {name!r} must have a floating-point dtype.")
+            if parameter.dtype not in (np.dtype(np.float32), np.dtype(np.float64)):
+                raise TypeError(
+                    f"Parameter {name!r} must use float32 or float64, "
+                    f"got {parameter.dtype}."
+                )
             if parameter.size == 0:
                 raise ValueError(f"Parameter {name!r} must be non-empty.")
 
@@ -78,6 +83,11 @@ class SGD:
                 )
             if not np.issubdtype(gradient.dtype, np.floating):
                 raise TypeError(f"Gradient {name!r} must have a floating-point dtype.")
+            if gradient.dtype != parameter.dtype:
+                raise TypeError(
+                    f"Gradient {name!r} dtype {gradient.dtype} does not "
+                    f"match parameter dtype {parameter.dtype}."
+                )
             if not np.all(np.isfinite(gradient)):
                 raise ValueError(f"Gradient {name!r} contains non-finite values.")
             normalized[name] = gradient
