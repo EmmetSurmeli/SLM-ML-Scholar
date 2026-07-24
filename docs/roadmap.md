@@ -79,23 +79,41 @@ Status: complete and verified.
 This is one educational single-head decoder block, not a stacked transformer
 or language model.
 
-## Milestone 5 — Multi-head causal self-attention
+## Milestone 5 — Decoder-only transformer language model
 
-Next planned step: implement multi-head causal self-attention by splitting the
-model dimension across independently validated heads, concatenating their
-outputs, applying an output projection, and validating the complete multi-head
-backward pass before constructing a full language model.
+### Part 1: architecture
+
+Status: complete and verified.
+
+- validated immutable transformer configuration
+- learned token embeddings
+- learned absolute position embeddings with batch gradient accumulation
+- exact-shape embedding composition
+- arbitrary positive stack of independent single-head decoder blocks
+- final LayerNorm
+- untied vocabulary projection producing \((B,T,V)\) logits
+- direct N-dimensional cross-entropy compatibility
+- explicit reverse-order manual backward
+- deterministic top-level child seeding
+- deterministic atomic state dictionaries and versioned checkpoints
+- multi-block forward/backward causality
+- exhaustive parameter finite differences for a tiny model
+- float32 execution and optimizer/clipping compatibility
+
+Part 1 deliberately adds no training loop, transformer generation, sampling,
+evaluation, multi-head attention, or performance optimization.
+
+## Milestone 6 — Multi-head causal self-attention
+
+Implement multi-head causal self-attention by splitting the model dimension
+across independently validated heads, concatenating their outputs, applying an
+output projection, and validating the complete multi-head backward pass before
+scaling transformer training.
 
 Keep the first fixtures tiny enough to check every input and parameter
-coordinate. Do not combine multi-head attention with position embeddings,
-stacking, vocabulary projection, and language-model training in one change.
+coordinate. Do not combine multi-head attention with training-system changes.
 
-The later decoder assembly will also require token and position embeddings,
-vocabulary projection, N-dimensional cross-entropy training, and autoregressive
-generation. Each addition must retain explicit backward propagation and receive
-its own numerical validation.
-
-## Milestone 6 — Tokenization and training
+## Milestone 7 — Tokenization and training
 
 Add:
 
@@ -109,7 +127,7 @@ Add:
 
 Report compute, data, wall time, and validation methodology with every run.
 
-## Milestone 7 — Correctness reference
+## Milestone 8 — Correctness reference
 
 Only after the independent implementation works:
 
@@ -122,7 +140,7 @@ Only after the independent implementation works:
 
 The reference must not become the source of the manual implementation.
 
-## Milestone 8 — Local paper retrieval
+## Milestone 9 — Local paper retrieval
 
 Add:
 
@@ -137,7 +155,7 @@ Add:
 Do not implement a PDF parser from raw bytes. Evaluate extraction failures
 explicitly, especially multi-column ordering, scanned documents, and equations.
 
-## Milestone 9 — ML-paper specialization
+## Milestone 10 — ML-paper specialization
 
 Build a legally usable, versioned training and evaluation corpus from:
 
@@ -163,7 +181,7 @@ Target capabilities:
 - limitation analysis
 - reproduction planning
 
-## Milestone 10 — Evaluation
+## Milestone 11 — Evaluation
 
 Create a manually reviewed benchmark with:
 
@@ -188,7 +206,7 @@ Compare:
 Factuality evaluation must point to exact page-level evidence in the supplied
 paper. Record annotator instructions and disagreement.
 
-## Milestone 11 — Local application
+## Milestone 12 — Local application
 
 Build a lightweight local interface for:
 
@@ -203,7 +221,7 @@ Build a lightweight local interface for:
 
 Define the local privacy boundary and storage paths in the interface.
 
-## Milestone 12 — Performance optimization
+## Milestone 13 — Performance optimization
 
 Profile before optimizing. Potential targets include:
 

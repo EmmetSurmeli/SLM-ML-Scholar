@@ -43,7 +43,8 @@ decorative feature.
 
 ## Implemented package boundaries
 
-Milestones 1 through 4 establish interfaces that later components can extend:
+Milestones 1 through 5 Part 1 establish interfaces that later components can
+extend:
 
 - `tokenizer.py` owns text/token conversion and vocabulary persistence.
 - `data.py` owns local loading, chronological splits, examples, and seeded
@@ -153,10 +154,57 @@ cross-token operation, so the complete block preserves its causal boundary.
 The block has no final normalization, multiple heads, stack, position
 representation, vocabulary projection, or training objective.
 
+## Current decoder-only language-model architecture
+
+`TransformerLanguageModel` is the permanent top-level model interface:
+
+```text
+integer token IDs (B, T)
+    ├── learned token embedding ─────┐
+    └── learned position embedding ─ + → hidden (B, T, D)
+                                          ↓
+                              decoder block 0
+                                          ↓
+                                      ...
+                                          ↓
+                              decoder block N - 1
+                                          ↓
+                                  final LayerNorm
+                                          ↓
+                         untied vocabulary Linear
+                                          ↓
+                                  logits (B, T, V)
+```
+
+The decoder stack uses the existing `Sequential` container. This provides
+deterministic numbered registration, forward iteration, reverse-order
+backward, recursive modes, and deterministic dotted parameter names without a
+new `ModuleList` abstraction.
+
+Learned positions are an independent `Embedding` table of shape
+`(maximum_context_length, model_dimension)`. Position IDs `0..T-1` repeat
+across the batch, so the existing indexed `np.add.at` backward naturally
+accumulates positional gradients over all examples. Token and position outputs
+are checked for exact shape equality before addition.
+
+The vocabulary head is a separate `Linear(model_dimension, vocabulary_size)`.
+It returns logits without applying softmax and does not share storage with the
+token embedding. The existing N-dimensional cross-entropy consumes these
+logits directly.
+
+One top-level seed spawns independent child seed streams for both embeddings,
+every decoder block, and the vocabulary head. The complete configuration and
+deterministic named state are checkpointed. The public state loader validates
+every key, shape, dtype, and finite value before changing any parameter.
+
+This is an architecture-only milestone. No transformer training loop,
+sampling, generation, evaluation utility, or trained transformer checkpoint
+exists yet.
+
 ## Current models
 
-The only language model still predicts the next character from the immediately
-preceding character:
+The only language model with an implemented training and generation path still
+predicts the next character from the immediately preceding character:
 
 \[
 P(x_{t+1}\mid x_t).
@@ -181,6 +229,11 @@ inspection composes token embeddings with the block, validates future-token
 independence, runs every manual backward path, and applies one optimizer step.
 One block without position information or a vocabulary output is still not a
 transformer language model.
+
+Milestone 5 Part 1 assembles a complete decoder-only transformer architecture
+that produces vocabulary logits and supports manual backward through every
+parameter. It has not been trained, evaluated, or given a transformer
+generation interface, so it makes no language capability claim.
 
 ## Future module constraints
 

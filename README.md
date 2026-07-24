@@ -21,9 +21,9 @@ framework or automatic-differentiation system. This is an educational and
 engineering constraint, not a claim that a from-scratch model is automatically
 faster or more capable.
 
-## Current status: Milestone 4
+## Current status: Milestone 5 Part 1
 
-The package version is `0.4.0`.
+The package version is `0.5.0`.
 
 Milestone 1 is complete and independently audited. Its character-level bigram
 learns a \(V\times V\) table of next-character logits and conditions only on
@@ -96,13 +96,34 @@ pre-normalized decoder block:
 All gradients remain manually implemented. The block is educational and
 unoptimized, and attention still uses one head.
 
+Milestone 5 Part 1 assembles the first complete decoder-only transformer
+language-model architecture:
+
+- validated immutable `TransformerConfig`
+- learned token embeddings
+- learned absolute position embeddings
+- exact-shape embedding addition
+- arbitrary positive stacks of independent decoder blocks
+- final LayerNorm
+- separate, untied vocabulary projection
+- unnormalized logits shaped `(batch, sequence, vocabulary)`
+- direct compatibility with the existing N-dimensional cross-entropy
+- explicit reverse-order manual backward through the complete model
+- deterministic independent child initialization from one top-level seed
+- deterministic atomic state dictionaries and versioned checkpoints
+- multi-block causality and exhaustive tiny-model parameter checks
+
+The public `TransformerLanguageModel` now exposes `forward`, `backward`,
+recursive parameters, state loading, checkpoints, and train/eval modes through
+the existing manual module conventions.
+
 The project is **still not an SLM and not yet a research-paper assistant**. The
 bigram cannot understand a paper, explain an equation, retrieve evidence, or
 maintain context beyond one character. The MLP is a synthetic integration
 fixture; the attention head and decoder block are numerical and causality
-fixtures. None adds useful paper understanding. There are no stacked decoder
-blocks, positional embeddings, language-model output head, or transformer
-training run.
+fixtures. The transformer architecture has not been trained or evaluated and
+has no transformer generation or sampling interface. It therefore makes no
+language-understanding or paper-assistance claim.
 
 ## Installation
 
@@ -134,7 +155,10 @@ XOR learning, attention-mask semantics, extreme-logit masked softmax,
 hand-computed attention, forward/backward causality, every attention parameter
 gradient, residual branch accumulation, position-wise feed-forward behavior,
 controlled decoder fixtures, full decoder-block gradients, three optimizer
-integrations, dtype policy, cache misuse, and malformed inputs.
+integrations, learned positional accumulation, independent decoder stacking,
+top-level state atomicity, cross-entropy compatibility, multi-block causality,
+exhaustive transformer parameter gradients, dtype policy, cache misuse, and
+malformed inputs.
 
 ### Verified implementation
 
@@ -150,9 +174,11 @@ python3 experiments/train_bigram.py --config configs/bigram_small.json
 python3 experiments/train_mlp_xor.py
 python3 experiments/inspect_single_head_attention.py
 python3 experiments/inspect_pre_norm_decoder_block.py
+PYTHONPATH=src python3 -c \
+  "import localml_scholar; print(localml_scholar.__version__)"
 ```
 
-Ruff reported no lint or formatting errors, and pytest reported `181 passed`.
+Ruff reported no lint or formatting errors, and pytest reported `219 passed`.
 The 300-step fallback-corpus smoke run used 2,094 training examples, 232
 validation examples, a 23-character vocabulary, and 529 parameters. Its best
 sampled validation loss was `1.5488034950125846` (perplexity
@@ -182,6 +208,12 @@ are recorded in the
 The 134-parameter decoder fixture produced synthetic loss
 `5.861637709654549`, preserved earlier outputs after changing a future token,
 and updated at least one parameter.
+
+The transformer architecture adds no training or performance result. Its
+verification consists of controlled forward calculations, direct
+cross-entropy integration, multi-block causality, exact float32 checkpoint
+reload, and exhaustive finite differences across all 56 parameters of a tiny
+one-layer float64 configuration.
 
 ## Training
 
@@ -213,6 +245,43 @@ The configured output directory receives:
 The same configuration, corpus bytes, NumPy behavior, and environment produce
 the same random draws and update sequence. Evaluation is a reproducible
 minibatch estimate, not an exhaustive validation loss.
+
+This training script applies only to the Milestone 1 bigram. No transformer
+training loop is included in Milestone 5 Part 1.
+
+## Transformer architecture interface
+
+The architecture accepts integer token IDs and returns logits. It does not
+apply softmax:
+
+```python
+import numpy as np
+
+from localml_scholar import TransformerConfig, TransformerLanguageModel
+from localml_scholar.losses import softmax_cross_entropy_loss_and_gradient
+
+config = TransformerConfig(
+    vocabulary_size=32,
+    maximum_context_length=16,
+    model_dimension=8,
+    number_of_layers=2,
+    key_dimension=4,
+    value_dimension=4,
+    feed_forward_dimension=16,
+    dtype=np.float64,
+    seed=7,
+)
+model = TransformerLanguageModel(config)
+token_ids = np.array([[1, 4, 2, 7]], dtype=np.int64)
+targets = np.array([[4, 2, 7, 3]], dtype=np.int64)
+
+logits = model.forward(token_ids)
+loss, grad_logits = softmax_cross_entropy_loss_and_gradient(logits, targets)
+model.backward(grad_logits)
+```
+
+This demonstrates interface compatibility only; it is not a training loop or
+a capability example.
 
 ## XOR foundation demonstration
 
@@ -325,6 +394,7 @@ src/localml_scholar/
   utils.py                Bigram checks and reporting utilities
   models/bigram.py        Trainable bigram model
   models/mlp.py           Two-layer foundation model
+  models/transformer_lm.py Decoder-only transformer architecture
 tests/                    Unit and numerical correctness tests
 outputs/                  Ignored generated run artifacts
 ```
@@ -339,9 +409,11 @@ Mathematical details are in:
 - [generalized gradient checking](docs/derivations/gradient_checking.md)
 - [single-head causal attention](docs/derivations/single_head_causal_attention.md)
 - [pre-norm decoder block](docs/derivations/pre_norm_decoder_block.md)
+- [transformer language model](docs/derivations/transformer_language_model.md)
 - [Milestone 1 audit](docs/audits/milestone_1_audit.md)
 - [Milestone 2 attention-readiness audit](docs/audits/milestone_2_attention_readiness_audit.md)
 - [Milestone 3 decoder-block readiness audit](docs/audits/milestone_3_decoder_block_readiness_audit.md)
+- [Milestone 4 transformer-readiness audit](docs/audits/milestone_4_transformer_readiness_audit.md)
 
 ## Limitations
 
@@ -359,10 +431,13 @@ Mathematical details are in:
 - Exact GELU uses standard-library scalar `erf`; it prioritizes transparent
   mathematics over throughput.
 - LayerNorm is implemented, but RMSNorm is not.
-- Milestone 4 has one single-head decoder block, but no multi-head attention,
-  decoder stack, padding mask, dropout, or language-model training path.
-- There are no positional embeddings, vocabulary projection, transformer
-  training checkpoints, or transformer generation path.
+- The transformer has a decoder stack, learned positions, and vocabulary
+  logits, but every block still uses one attention head.
+- There is no dropout, rotary representation, KV cache, FlashAttention,
+  mixed-precision path, weight tying, or optimized kernel.
+- There is no transformer training loop, trained transformer checkpoint,
+  evaluation, sampling, or generation path.
+- Learned positions impose a fixed maximum context length.
 - Attention uses \(O(T^2)\) score/probability storage and has no KV cache or
   optimized kernel.
 - The fallback corpus exists only for tests and smoke runs. It is not useful
@@ -371,12 +446,13 @@ Mathematical details are in:
 
 ## Roadmap
 
-The next milestone is multi-head causal self-attention: split the model
-dimension across independently validated heads, concatenate their outputs,
-apply an output projection, and validate the complete multi-head backward pass
-before constructing a full language model. Local PDF parsing, retrieval,
-licensed ML-paper specialization, evidence-based evaluation, an application,
-and measured performance work remain later milestones.
+The next architectural milestone is multi-head causal self-attention: split
+the model dimension across independently validated heads, concatenate their
+outputs, apply an output projection, and validate the complete multi-head
+backward pass before scaling transformer training. Training, generation, local
+PDF parsing, retrieval, licensed ML-paper specialization, evidence-based
+evaluation, an application, and measured performance work remain later
+milestones.
 
 See [the full roadmap](docs/roadmap.md) and
 [the architecture](docs/architecture.md).
