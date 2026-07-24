@@ -43,7 +43,7 @@ decorative feature.
 
 ## Implemented package boundaries
 
-Milestones 1 through 3 establish interfaces that later components can extend:
+Milestones 1 through 4 establish interfaces that later components can extend:
 
 - `tokenizer.py` owns text/token conversion and vocabulary persistence.
 - `data.py` owns local loading, chronological splits, examples, and seeded
@@ -51,7 +51,8 @@ Milestones 1 through 3 establish interfaces that later components can extend:
 - `losses.py` owns explicit numerical forward/backward primitives.
 - `nn/` owns explicit `Parameter`/`Module` foundations, initializers, layers,
   activations, normalization, sequential composition, causal masks, stable
-  masked softmax, and one single-head causal-attention module.
+  masked softmax, one single-head causal-attention module, residual primitives,
+  a position-wise feed-forward module, and one pre-norm decoder block.
 - `optim/` owns optimizers over identity-keyed parameters.
 - `training/` owns global gradient clipping and generalized finite differences.
 - `models/` composes primitives into checkpointable models.
@@ -108,9 +109,49 @@ gradients; scaled score backward produces query and key gradients; and the
 three projection input gradients are explicitly summed. The optional output
 projection is differentiated first when enabled.
 
-This implementation materializes the complete score and probability matrices.
-It has no dropout, padding mask, multiple heads, residual path, decoder block,
-KV cache, or optimized kernel.
+The standalone attention implementation materializes the complete score and
+probability matrices. It does not itself include dropout, a padding mask,
+multiple heads, a residual path, a decoder block, a KV cache, or an optimized
+kernel.
+
+## Current decoder-block architecture
+
+`PreNormDecoderBlock` composes the validated primitives in this exact order:
+
+```text
+X
+├── LayerNorm 1 → single-head causal attention ─┐
+└────────────────────────────────────────────── + → R1
+                                                │
+                                                ├── LayerNorm 2
+                                                │   → Linear
+                                                │   → exact GELU
+                                                │   → Linear ─┐
+                                                └───────────── + → Y
+```
+
+The attention output projection is enabled by default so arbitrary valid
+value dimensions map back to the model dimension before the first residual.
+When it is disabled, construction requires the value dimension to equal the
+model dimension.
+
+Residual addition is an explicit checked numerical operation rather than a
+module or automatic graph node. Both operands must have identical shape and
+dtype. Backward returns independent copies of the upstream gradient to the
+identity and transformed paths. `PreNormDecoderBlock.backward` then performs
+both accumulation steps visibly:
+
+1. add the second residual identity gradient to the gradient returned through
+   feed-forward and LayerNorm 2;
+2. add the first residual identity gradient to the gradient returned through
+   attention and LayerNorm 1.
+
+LayerNorm, the feed-forward network, and residual addition operate
+independently at each position. Single-head causal attention remains the only
+cross-token operation, so the complete block preserves its causal boundary.
+
+The block has no final normalization, multiple heads, stack, position
+representation, vocabulary projection, or training objective.
 
 ## Current models
 
@@ -134,6 +175,12 @@ understanding.
 Milestone 3 adds a single attention head and an inspection experiment. It
 validates causal information flow and the local derivatives needed by a future
 decoder, but it is not itself a sequence language model or transformer.
+
+Milestone 4 adds one mathematically complete decoder block. Its deterministic
+inspection composes token embeddings with the block, validates future-token
+independence, runs every manual backward path, and applies one optimizer step.
+One block without position information or a vocabulary output is still not a
+transformer language model.
 
 ## Future module constraints
 

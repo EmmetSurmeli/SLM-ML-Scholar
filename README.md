@@ -21,7 +21,9 @@ framework or automatic-differentiation system. This is an educational and
 engineering constraint, not a claim that a from-scratch model is automatically
 faster or more capable.
 
-## Current status: Milestone 3
+## Current status: Milestone 4
+
+The package version is `0.4.0`.
 
 Milestone 1 is complete and independently audited. Its character-level bigram
 learns a \(V\times V\) table of next-character logits and conditions only on
@@ -75,11 +77,32 @@ multi-head attention, a transformer block, or a language model. It materializes
 the complete score matrix and has no dropout, padding mask, residual path, or
 KV cache.
 
+Milestone 4 composes the validated components into one mathematically complete
+pre-normalized decoder block:
+
+- `LayerNorm -> single-head causal attention -> residual addition`
+- `LayerNorm -> Linear -> exact GELU -> Linear -> residual addition`
+- exact-shape residual checks with no silent broadcasting
+- explicit identity and transformed gradient branches
+- manual accumulation at both residual joins
+- configurable key, value, and feed-forward dimensions
+- optional attention and feed-forward biases
+- an attention output projection enabled by default
+- versioned feed-forward and decoder-block checkpoints
+- exhaustive full-block input and parameter finite differences
+- operational forward and backward causality validation
+- deterministic embedding-to-decoder inspection and optimizer step
+
+All gradients remain manually implemented. The block is educational and
+unoptimized, and attention still uses one head.
+
 The project is **still not an SLM and not yet a research-paper assistant**. The
 bigram cannot understand a paper, explain an equation, retrieve evidence, or
 maintain context beyond one character. The MLP is a synthetic integration
-fixture, and the attention head is a derivative and causality fixture; neither
-adds useful paper understanding.
+fixture; the attention head and decoder block are numerical and causality
+fixtures. None adds useful paper understanding. There are no stacked decoder
+blocks, positional embeddings, language-model output head, or transformer
+training run.
 
 ## Installation
 
@@ -109,7 +132,9 @@ gradient accumulation, 2D/3D layer behavior, LayerNorm, hand-computed optimizer
 trajectories, global clipping, nested module behavior, checkpoint identity,
 XOR learning, attention-mask semantics, extreme-logit masked softmax,
 hand-computed attention, forward/backward causality, every attention parameter
-gradient, dtype policy, cache misuse, and malformed inputs.
+gradient, residual branch accumulation, position-wise feed-forward behavior,
+controlled decoder fixtures, full decoder-block gradients, three optimizer
+integrations, dtype policy, cache misuse, and malformed inputs.
 
 ### Verified implementation
 
@@ -124,9 +149,10 @@ python3 -m pytest -q
 python3 experiments/train_bigram.py --config configs/bigram_small.json
 python3 experiments/train_mlp_xor.py
 python3 experiments/inspect_single_head_attention.py
+python3 experiments/inspect_pre_norm_decoder_block.py
 ```
 
-Ruff reported no lint or formatting errors, and pytest reported `132 passed`.
+Ruff reported no lint or formatting errors, and pytest reported `181 passed`.
 The 300-step fallback-corpus smoke run used 2,094 training examples, 232
 validation examples, a 23-character vocabulary, and 529 parameters. Its best
 sampled validation loss was `1.5488034950125846` (perplexity
@@ -146,6 +172,16 @@ all future-token probabilities were exactly zero. Its measured values are
 recorded in the
 [Milestone 2 attention-readiness audit](docs/audits/milestone_2_attention_readiness_audit.md);
 this is a mathematical inspection, not a quality or performance benchmark.
+
+The deterministic decoder-block inspection reports both normalized paths,
+Q/K/V and score shapes, the causal mask and probabilities, both residual
+outputs, the feed-forward hidden shape, every parameter-group gradient norm,
+and whether one Adam step changed a block parameter. Its exact measured values
+are recorded in the
+[Milestone 3 decoder-block readiness audit](docs/audits/milestone_3_decoder_block_readiness_audit.md).
+The 134-parameter decoder fixture produced synthetic loss
+`5.861637709654549`, preserved earlier outputs after changing a future token,
+and updated at least one parameter.
 
 ## Training
 
@@ -218,6 +254,27 @@ outputs/attention_inspection/run_summary.json
 
 The output directory is ignored by Git. This experiment does not train a model.
 
+## Pre-norm decoder-block inspection
+
+Run a deterministic token-ID → embedding → one-decoder-block forward/backward
+calculation and optimizer step:
+
+```bash
+python3 experiments/inspect_pre_norm_decoder_block.py
+```
+
+The script prints the embedding, normalization, Q/K/V, attention,
+feed-forward, residual, and final output shapes. It verifies exact future-mask
+zeros, output-shape preservation, earlier-output independence under a future
+token change, finite gradients, and a real decoder-parameter update. It writes:
+
+```text
+outputs/decoder_block_inspection/run_summary.json
+```
+
+This is an educational correctness inspection, not language-model training or
+a performance benchmark.
+
 ## Example generation
 
 ```python
@@ -260,7 +317,7 @@ src/localml_scholar/
   data.py                 Local loading, splits, examples, minibatches
   tokenizer.py            Character tokenizer
   losses.py               N-D stable softmax and indexed cross-entropy
-  nn/                     Layers, modules, masks, and one attention head
+  nn/                     Layers, attention, FFN, and one decoder block
   optim/                  SGD, momentum, and Adam
   training/               Gradient clipping and finite differences
   optimizers.py           Milestone 1 compatibility SGD
@@ -281,8 +338,10 @@ Mathematical details are in:
 - [optimizers and clipping](docs/derivations/optimizers.md)
 - [generalized gradient checking](docs/derivations/gradient_checking.md)
 - [single-head causal attention](docs/derivations/single_head_causal_attention.md)
+- [pre-norm decoder block](docs/derivations/pre_norm_decoder_block.md)
 - [Milestone 1 audit](docs/audits/milestone_1_audit.md)
 - [Milestone 2 attention-readiness audit](docs/audits/milestone_2_attention_readiness_audit.md)
+- [Milestone 3 decoder-block readiness audit](docs/audits/milestone_3_decoder_block_readiness_audit.md)
 
 ## Limitations
 
@@ -300,9 +359,10 @@ Mathematical details are in:
 - Exact GELU uses standard-library scalar `erf`; it prioritizes transparent
   mathematics over throughput.
 - LayerNorm is implemented, but RMSNorm is not.
-- Milestone 3 has one attention head, but no multi-head composition, padding
-  mask, dropout, residual block, sequence model, or language-model training
-  path.
+- Milestone 4 has one single-head decoder block, but no multi-head attention,
+  decoder stack, padding mask, dropout, or language-model training path.
+- There are no positional embeddings, vocabulary projection, transformer
+  training checkpoints, or transformer generation path.
 - Attention uses \(O(T^2)\) score/probability storage and has no KV cache or
   optimized kernel.
 - The fallback corpus exists only for tests and smoke runs. It is not useful
@@ -311,12 +371,12 @@ Mathematical details are in:
 
 ## Roadmap
 
-The next milestone is a minimal pre-normalized decoder block built from the
-validated single-head attention, residual connections, LayerNorm, and a
-two-layer feed-forward network. The complete block will be validated before
-multi-head attention is added. Local PDF parsing, retrieval, licensed ML-paper
-specialization, evidence-based evaluation, an application, and measured
-performance work remain later milestones.
+The next milestone is multi-head causal self-attention: split the model
+dimension across independently validated heads, concatenate their outputs,
+apply an output projection, and validate the complete multi-head backward pass
+before constructing a full language model. Local PDF parsing, retrieval,
+licensed ML-paper specialization, evidence-based evaluation, an application,
+and measured performance work remain later milestones.
 
 See [the full roadmap](docs/roadmap.md) and
 [the architecture](docs/architecture.md).

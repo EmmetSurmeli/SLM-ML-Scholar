@@ -61,22 +61,41 @@ model.
 
 ## Milestone 4 — Minimal decoder block
 
-Next planned step: assemble a minimal pre-normalized decoder block using the
-validated single-head causal attention, residual connections, LayerNorm, and a
-two-layer feed-forward network. Validate the entire forward and backward path
-with tiny hand-computed fixtures and exhaustive finite differences before
-adding multi-head attention.
+Status: complete and verified.
 
-After the single-head block is correct, add multi-head composition
-incrementally rather than combining new attention, residual, and feed-forward
-logic in one step.
+- exact-shape residual forward and branch-gradient primitives
+- reusable position-wise `Linear -> GELU -> Linear` feed-forward module
+- pre-normalized attention residual
+- pre-normalized feed-forward residual
+- optional attention output projection with explicit compatibility validation
+- manual backward flow through both residual branch splits and accumulations
+- stable deterministic nested parameter names and versioned checkpoints
+- controlled identity and attention-only fixtures
+- forward and backward causality tests
+- exhaustive float64 input and parameter finite differences
+- float32 execution, three optimizer integrations, and gradient clipping
+- deterministic embedding-to-decoder inspection and one optimizer step
+
+This is one educational single-head decoder block, not a stacked transformer
+or language model.
+
+## Milestone 5 — Multi-head causal self-attention
+
+Next planned step: implement multi-head causal self-attention by splitting the
+model dimension across independently validated heads, concatenating their
+outputs, applying an output projection, and validating the complete multi-head
+backward pass before constructing a full language model.
+
+Keep the first fixtures tiny enough to check every input and parameter
+coordinate. Do not combine multi-head attention with position embeddings,
+stacking, vocabulary projection, and language-model training in one change.
 
 The later decoder assembly will also require token and position embeddings,
 vocabulary projection, N-dimensional cross-entropy training, and autoregressive
 generation. Each addition must retain explicit backward propagation and receive
 its own numerical validation.
 
-## Milestone 5 — Tokenization and training
+## Milestone 6 — Tokenization and training
 
 Add:
 
@@ -90,7 +109,7 @@ Add:
 
 Report compute, data, wall time, and validation methodology with every run.
 
-## Milestone 6 — Correctness reference
+## Milestone 7 — Correctness reference
 
 Only after the independent implementation works:
 
@@ -103,7 +122,7 @@ Only after the independent implementation works:
 
 The reference must not become the source of the manual implementation.
 
-## Milestone 7 — Local paper retrieval
+## Milestone 8 — Local paper retrieval
 
 Add:
 
@@ -118,7 +137,7 @@ Add:
 Do not implement a PDF parser from raw bytes. Evaluate extraction failures
 explicitly, especially multi-column ordering, scanned documents, and equations.
 
-## Milestone 8 — ML-paper specialization
+## Milestone 9 — ML-paper specialization
 
 Build a legally usable, versioned training and evaluation corpus from:
 
@@ -144,7 +163,7 @@ Target capabilities:
 - limitation analysis
 - reproduction planning
 
-## Milestone 9 — Evaluation
+## Milestone 10 — Evaluation
 
 Create a manually reviewed benchmark with:
 
@@ -169,7 +188,7 @@ Compare:
 Factuality evaluation must point to exact page-level evidence in the supplied
 paper. Record annotator instructions and disagreement.
 
-## Milestone 10 — Local application
+## Milestone 11 — Local application
 
 Build a lightweight local interface for:
 
@@ -184,7 +203,7 @@ Build a lightweight local interface for:
 
 Define the local privacy boundary and storage paths in the interface.
 
-## Milestone 11 — Performance optimization
+## Milestone 12 — Performance optimization
 
 Profile before optimizing. Potential targets include:
 
