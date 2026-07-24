@@ -8,7 +8,7 @@ from numpy.typing import NDArray
 from localml_scholar.losses import stable_softmax
 from localml_scholar.models.bigram import BigramLanguageModel
 from localml_scholar.models.transformer_lm import TransformerLanguageModel
-from localml_scholar.tokenizer import CharacterTokenizer
+from localml_scholar.tokenizer import CharacterTokenizer, Tokenizer
 
 FloatArray = NDArray[np.float64]
 
@@ -220,3 +220,35 @@ def generate_transformer_ids(
                 )
             generated = np.concatenate((generated, next_ids[:, None]), axis=1)
     return generated
+
+
+def generate_transformer_text(
+    model: TransformerLanguageModel,
+    tokenizer: Tokenizer,
+    prompt: str,
+    *,
+    max_new_tokens: int,
+    temperature: float = 1.0,
+    top_k: int | None = None,
+    greedy: bool = False,
+    seed: int | None = None,
+    decode_errors: str = "replace",
+) -> str:
+    """Encode a prompt, generate IDs, and decode with an explicit policy."""
+    if not isinstance(tokenizer, Tokenizer):
+        raise TypeError("tokenizer must implement the Tokenizer interface.")
+    if tokenizer.vocabulary_size != model.config.vocabulary_size:
+        raise ValueError("Tokenizer and model vocabulary sizes must match.")
+    prompt_ids = tokenizer.encode(prompt)
+    if prompt_ids.size == 0:
+        raise ValueError("prompt must encode to at least one token.")
+    generated = generate_transformer_ids(
+        model,
+        prompt_ids[None, :],
+        max_new_tokens=max_new_tokens,
+        temperature=temperature,
+        top_k=top_k,
+        greedy=greedy,
+        seed=seed,
+    )
+    return tokenizer.decode(generated[0], errors=decode_errors)

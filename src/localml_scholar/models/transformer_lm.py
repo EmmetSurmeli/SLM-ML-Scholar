@@ -23,11 +23,11 @@ from localml_scholar.nn.transformer import (
     residual_add_backward,
 )
 from localml_scholar.serialization import atomic_savez
+from localml_scholar.tokenizer import Tokenizer, tokenizer_from_state_dict
 
-_CHECKPOINT_VERSION = 2
-_MODEL_VERSION = "0.6.0"
-_LEGACY_CHECKPOINT_VERSION = 1
-_LEGACY_MODEL_VERSION = "0.5.0"
+_CHECKPOINT_VERSION = 3
+_MODEL_VERSION = "0.7.0"
+_LEGACY_IDENTITIES = frozenset({(1, "0.5.0"), (2, "0.6.0")})
 
 
 def _positive_integer(value: int, name: str) -> int:
@@ -409,17 +409,33 @@ class TransformerLanguageModel(Module):
         for name, parameter in named_parameters:
             parameter.load_data(validated[name])
 
-    def save_checkpoint(self, path: str | Path) -> Path:
-        """Persist model version, configuration, and complete named state."""
+    def save_checkpoint(
+        self,
+        path: str | Path,
+        *,
+        tokenizer: Tokenizer | None = None,
+    ) -> Path:
+        """Persist model state and optional complete tokenizer identity."""
         destination = Path(path)
         if destination.suffix != ".npz":
             raise ValueError("Checkpoint path must end with '.npz'.")
+        if tokenizer is not None and not isinstance(tokenizer, Tokenizer):
+            raise TypeError("tokenizer must implement the Tokenizer interface.")
+        if (
+            tokenizer is not None
+            and tokenizer.vocabulary_size != self.config.vocabulary_size
+        ):
+            raise ValueError("Tokenizer and model vocabulary sizes must match.")
         destination.parent.mkdir(parents=True, exist_ok=True)
         metadata = {
             "checkpoint_version": _CHECKPOINT_VERSION,
             "model_version": _MODEL_VERSION,
             "model_type": type(self).__name__,
             "configuration": self.config.to_dict(),
+            "tokenizer": None if tokenizer is None else tokenizer.state_dict(),
+            "tokenizer_state_sha256": (
+                None if tokenizer is None else tokenizer.state_hash()
+            ),
         }
         arrays: dict[str, np.ndarray] = {
             "metadata_json": np.asarray(json.dumps(metadata, sort_keys=True))
@@ -450,18 +466,34 @@ class TransformerLanguageModel(Module):
                     checkpoint_version == _CHECKPOINT_VERSION
                     and model_version == _MODEL_VERSION
                 )
-                is_legacy = (
-                    checkpoint_version == _LEGACY_CHECKPOINT_VERSION
-                    and model_version == _LEGACY_MODEL_VERSION
-                )
+                identity = (checkpoint_version, model_version)
+                is_legacy = identity in _LEGACY_IDENTITIES
                 if not is_current and not is_legacy:
                     raise ValueError(
                         "Unsupported transformer checkpoint schema/model version: "
                         f"checkpoint_version={checkpoint_version!r}, "
                         f"model_version={model_version!r}. Expected current "
-                        f"({_CHECKPOINT_VERSION}, {_MODEL_VERSION!r}) or legacy "
-                        f"single-head ({_LEGACY_CHECKPOINT_VERSION}, "
-                        f"{_LEGACY_MODEL_VERSION!r})."
+                        f"({_CHECKPOINT_VERSION}, {_MODEL_VERSION!r}) or a "
+                        f"supported legacy identity {sorted(_LEGACY_IDENTITIES)!r}."
+                    )
+                base_metadata_keys = {
+                    "checkpoint_version",
+                    "model_version",
+                    "model_type",
+                    "configuration",
+                }
+                current_metadata_keys = base_metadata_keys | {
+                    "tokenizer",
+                    "tokenizer_state_sha256",
+                }
+                allowed_metadata_keys = (
+                    (current_metadata_keys,)
+                    if is_current
+                    else (base_metadata_keys, current_metadata_keys)
+                )
+                if set(metadata) not in allowed_metadata_keys:
+                    raise ValueError(
+                        "Checkpoint metadata keys do not match its schema version."
                     )
                 if metadata.get("model_type") != cls.__name__:
                     raise ValueError(
@@ -471,6 +503,8 @@ class TransformerLanguageModel(Module):
                 configuration = metadata.get("configuration")
                 if not isinstance(configuration, dict):
                     raise ValueError("Checkpoint configuration must be an object.")
+                tokenizer_state = metadata.get("tokenizer")
+                tokenizer_hash = metadata.get("tokenizer_state_sha256")
                 state = {
                     key.removeprefix("parameter::"): np.array(
                         checkpoint[key],
@@ -495,8 +529,39 @@ class TransformerLanguageModel(Module):
         model = cls(
             TransformerConfig.from_dict(
                 configuration,
-                allow_legacy_single_head=is_legacy,
+                allow_legacy_single_head=identity == (1, "0.5.0"),
             )
         )
         model.load_state_dict(state)
+        if tokenizer_state is not None:
+            try:
+                tokenizer = tokenizer_from_state_dict(tokenizer_state)
+            except (TypeError, ValueError) as error:
+                raise ValueError("Checkpoint tokenizer state is invalid.") from error
+            if tokenizer.state_hash() != tokenizer_hash:
+                raise ValueError("Checkpoint tokenizer hash is inconsistent.")
+            if tokenizer.vocabulary_size != model.config.vocabulary_size:
+                raise ValueError(
+                    "Checkpoint tokenizer and model vocabulary sizes differ."
+                )
+        elif tokenizer_hash is not None:
+            raise ValueError("Checkpoint tokenizer hash exists without state.")
         return model
+
+    @classmethod
+    def load_checkpoint_with_tokenizer(
+        cls,
+        path: str | Path,
+    ) -> tuple[TransformerLanguageModel, Tokenizer]:
+        """Restore a model-only checkpoint and its required tokenizer."""
+        model = cls.load_checkpoint(path)
+        source = Path(path)
+        with np.load(source, allow_pickle=False) as checkpoint:
+            metadata = json.loads(str(checkpoint["metadata_json"]))
+        tokenizer_state = metadata.get("tokenizer")
+        if tokenizer_state is None:
+            raise ValueError("Model checkpoint does not contain tokenizer state.")
+        tokenizer = tokenizer_from_state_dict(tokenizer_state)
+        if tokenizer.state_hash() != metadata.get("tokenizer_state_sha256"):
+            raise ValueError("Checkpoint tokenizer hash is inconsistent.")
+        return model, tokenizer

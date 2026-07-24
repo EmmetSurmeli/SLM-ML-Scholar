@@ -144,21 +144,48 @@ Status: complete and verified.
 The implementation is educational and unoptimized. It materializes quadratic
 attention tensors and makes no claim that more heads improve quality.
 
-## Milestone 7 — Tokenization and scaled training
+## Milestone 7 — Byte and BPE tokenization infrastructure
 
-Improve the language-modeling foundation through tokenizer and corpus
-infrastructure, beginning with a byte-level or independently implemented BPE
-tokenizer, padding-aware batching if needed, and controlled training
-experiments before adding paper retrieval.
+Status: complete and verified.
 
-The tokenizer must remain independently implemented and versioned. Corpus
-provenance, licensing, encoding policy, train/validation isolation, unknown or
-byte handling, and checkpoint compatibility must be explicit before scaling
-data or context lengths. Do not add retrieval in this milestone.
+- minimal explicit tokenizer contract with deterministic state hashes
+- preserved, versioned character tokenizer and legacy schema migration
+- fixed 256-symbol UTF-8 byte tokenizer
+- independently trained byte-level BPE with no unknown token
+- deterministic frequency/lexicographic pair selection
+- document-local counting and left-to-right non-overlapping replacement
+- ranked BPE encoding and corpus-independent recursive decoding
+- explicit `normalization="none"` and strict/replacement UTF-8 policies
+- raw chronological split before character/BPE fitting
+- corpus content, split, tokenizer, and token-stream identity metadata
+- complete tokenizer state in full resumable checkpoints
+- tokenizer-aware model bundles, generation, CLI selection, and resume
+- exact interrupted/resumed character, byte, and BPE training
+- transparent BPE inspection and controlled tokenizer comparison
+- bytes-per-token and sampled bits-per-byte reporting
 
-Report compute, data, wall time, and validation methodology with every run.
+The BPE path is a correctness-oriented reference implementation, not a
+large-corpus-optimized tokenizer. Token-level perplexity is not compared across
+different token units without byte normalization.
 
-## Milestone 8 — Correctness reference
+## Milestone 8 — Document ingestion and transparent retrieval
+
+Next recommended milestone:
+
+> Build the first document ingestion and retrieval subsystem independently of
+> the language model: parse local text and PDF-derived content, preserve source
+> metadata and section boundaries, chunk documents deterministically, compute a
+> transparent retrieval baseline, and return cited passages before attempting
+> answer generation.
+
+This milestone should keep retrieval independent of model training so newly
+loaded documents do not require retraining. Use a dedicated local PDF parsing
+library rather than parsing raw PDF bytes. Begin with a transparent lexical
+baseline, exact metadata, deterministic chunks, and evidence-return tests before
+considering learned embeddings or answer generation. Explicitly evaluate
+multi-column ordering, scanned documents, equations, and missing metadata.
+
+## Milestone 9 — Correctness reference
 
 Only after the independent implementation works:
 
@@ -170,21 +197,6 @@ Only after the independent implementation works:
 - keep PyTorch outside the main implementation and dependency path
 
 The reference must not become the source of the manual implementation.
-
-## Milestone 9 — Local paper retrieval
-
-Add:
-
-- local PDF parsing with a dedicated local library
-- section-aware chunking
-- page metadata
-- equation and figure-caption extraction where feasible
-- local vector or lexical retrieval
-- citation-preserving context assembly
-- no cloud dependencies
-
-Do not implement a PDF parser from raw bytes. Evaluate extraction failures
-explicitly, especially multi-column ordering, scanned documents, and equations.
 
 ## Milestone 10 — ML-paper specialization
 

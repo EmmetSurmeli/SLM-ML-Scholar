@@ -21,9 +21,9 @@ framework or automatic-differentiation system. This is an educational and
 engineering constraint, not a claim that a from-scratch model is automatically
 faster or more capable.
 
-## Current status: Milestone 6
+## Current status: Milestone 7
 
-The package version is `0.6.0`.
+The package version is `0.7.0`.
 
 Milestone 1 is complete and independently audited. Its character-level bigram
 learns a \(V\times V\) table of next-character logits and conditions only on
@@ -151,9 +151,30 @@ self-attention:
   checkpoints
 - deterministic inspection and controlled one-head/two-head experiments
 
-The model remains character-level, tiny, educational, CPU-oriented, and
-unoptimized. Every neural-network gradient is manually implemented; there is
-no PyTorch, autograd, or external training framework.
+Milestone 7 makes tokenization an explicit, checkpointed subsystem without
+changing transformer mathematics:
+
+- one minimal versioned interface for character, byte, and byte-level BPE
+- preserved sorted character IDs and legacy character-checkpoint migration
+- fixed byte IDs `0..255` for arbitrary UTF-8 text
+- independently implemented deterministic byte-level BPE
+- frequency-first, lexicographic tie-breaking and non-overlapping merges
+- no Unicode or whitespace normalization
+- strict decoding by default and explicit replacement display for generated
+  invalid UTF-8
+- chronological raw-text splitting before character/BPE fitting
+- raw corpus, tokenizer, and encoded-stream identity hashes
+- tokenizer-aware training, generation, model bundles, and exact resume
+- transparent BPE inspection and a controlled three-tokenizer comparison
+
+Byte and BPE tokenizers encode arbitrary valid Python Unicode text without an
+unknown token. In controlled experiments, validation text never affects the
+character vocabulary or BPE merge table. No external tokenizer library is
+used.
+
+The model remains tiny, educational, CPU-oriented, and unoptimized. Every
+neural-network gradient is manually implemented; there is no PyTorch, autograd,
+or external training framework.
 
 The project is **still not a useful SLM and not yet a research-paper
 assistant**. The
@@ -215,6 +236,7 @@ The following commands were executed successfully from the repository root on
 python3 -m ruff format .
 python3 -m ruff check .
 python3 -m ruff format --check .
+git diff --check
 python3 -m pytest -q
 python3 experiments/train_bigram.py --config configs/bigram_small.json
 python3 experiments/train_mlp_xor.py
@@ -222,6 +244,8 @@ python3 experiments/inspect_single_head_attention.py
 python3 experiments/inspect_pre_norm_decoder_block.py
 python3 experiments/inspect_multi_head_attention.py
 python3 experiments/compare_single_and_multi_head.py --steps 20
+python3 experiments/inspect_bpe_tokenizer.py
+python3 experiments/compare_tokenizers.py --steps 12
 python3 experiments/overfit_tiny_transformer.py \
   --heads 1 --steps 40 \
   --output outputs/tiny_transformer_overfit_one_head
@@ -246,12 +270,37 @@ python3 experiments/train_transformer_lm.py \
   --output outputs/transformer_lm_multi_head_resume_smoke \
   --resume \
     outputs/transformer_lm_multi_head_resume_smoke/latest_training_checkpoint.npz
+python3 experiments/train_transformer_lm.py \
+  --tokenizer byte --heads 2 \
+  --steps 6 --until-step 3 \
+  --evaluation-interval 2 --evaluation-batches 2 \
+  --checkpoint-interval 3 --generation-length 8 \
+  --output outputs/m7_byte_smoke
+python3 experiments/train_transformer_lm.py \
+  --heads 2 --steps 6 --until-step 6 \
+  --evaluation-interval 2 --evaluation-batches 2 \
+  --checkpoint-interval 3 --generation-length 8 \
+  --output outputs/m7_byte_smoke \
+  --resume outputs/m7_byte_smoke/latest_training_checkpoint.npz
+python3 experiments/train_transformer_lm.py \
+  --tokenizer bpe \
+  --bpe-vocabulary-size 272 --bpe-minimum-frequency 2 \
+  --heads 2 --steps 6 --until-step 3 \
+  --evaluation-interval 2 --evaluation-batches 2 \
+  --checkpoint-interval 3 --generation-length 8 \
+  --output outputs/m7_bpe_smoke
+python3 experiments/train_transformer_lm.py \
+  --heads 2 --steps 6 --until-step 6 \
+  --evaluation-interval 2 --evaluation-batches 2 \
+  --checkpoint-interval 3 --generation-length 8 \
+  --output outputs/m7_bpe_smoke \
+  --resume outputs/m7_bpe_smoke/latest_training_checkpoint.npz
 PYTHONPATH=src python3 -c \
   "import localml_scholar; print(localml_scholar.__version__)"
 ```
 
-Ruff reported no lint or formatting errors, `git diff --check` was clean, and
-pytest reported `315 passed in 4.27s`.
+Ruff 0.15.18 reported no lint or formatting errors, `git diff --check` was
+clean, and pytest 9.1.1 reported `394 passed in 5.67s`.
 The 300-step fallback-corpus smoke run used 2,094 training examples, 232
 validation examples, a 23-character vocabulary, and 529 parameters. Its best
 sampled validation loss was `1.5488034950125846` (perplexity
@@ -314,6 +363,27 @@ training checkpoint as one-head models; the latter preserved the recorded
 generation prefix. These are plumbing and compatibility results, not
 competitive benchmarks.
 
+The controlled tokenizer study used 1,560 code points / 1,700 UTF-8 bytes,
+held the seed, 12 updates, batch/context shape, model dimensions, and optimizer
+settings constant, and resumed every run at step 6. Character tokenization used
+30 tokens in its vocabulary and encoded the training split into 1,248 tokens
+(`1.0897` bytes/token); byte tokenization used 256 vocabulary entries and 1,360
+tokens (`1.0` byte/token); BPE learned 16 merges for a 272-token vocabulary and
+encoded 880 tokens (`1.5455` bytes/token). Sampled validation BPB was
+`4.2317`, `6.2997`, and `3.8432`, respectively. All round trips and checkpoint
+reload comparisons were exact. These are 48-target fixed-seed sampled metrics
+from one tiny controlled corpus; they do not establish that any tokenizer is
+generally better.
+
+On the shared fallback corpus, the six-step byte smoke resumed at step 3 and
+ended at sampled validation loss `4.7954421043396`; the 16-merge BPE smoke
+resumed at step 3 and ended at `4.993645429611206`. Their token perplexities
+are not compared because the units differ. Both resumed without a tokenizer CLI
+selection, demonstrating checkpoint-owned tokenizer restoration. The loaders
+also reopened real repository 0.5.0/0.6.0 model checkpoints and 0.5.1/0.6.0
+full-training checkpoints with their original one-/two-head configurations and
+23-character ID mapping.
+
 ## Training
 
 Put a legally usable UTF-8 corpus at `data/raw/corpus.txt`; data is not
@@ -347,13 +417,16 @@ minibatch estimate, not an exhaustive validation loss.
 
 That script applies only to the Milestone 1 bigram.
 
-### Transformer training and exact resume
+### Transformer training, tokenizers, and exact resume
 
 Train the manual multi-head-capable transformer on a local UTF-8 corpus:
 
 ```bash
 python3 experiments/train_transformer_lm.py \
   --input data/raw/corpus.txt \
+  --tokenizer bpe \
+  --bpe-vocabulary-size 300 \
+  --bpe-minimum-frequency 2 \
   --heads 2 \
   --steps 100 \
   --output outputs/transformer_local
@@ -365,7 +438,10 @@ small and CPU-friendly. Common architecture and training controls include
 `--heads`, `--key-dimension`, `--value-dimension`,
 `--feed-forward-dimension`,
 `--learning-rate`, evaluation/checkpoint intervals, prompt, generation length,
-and seed.
+and seed. Select `--tokenizer character`, `--tokenizer byte`, or
+`--tokenizer bpe`. A new BPE run fits on the raw training split only.
+`--tokenizer-load` uses a validated existing tokenizer, and
+`--tokenizer-save` chooses its output path.
 
 For an intentional interruption/resumption check, configure the final maximum
 with `--steps` and stop the first invocation early with `--until-step`:
@@ -383,9 +459,11 @@ python3 experiments/train_transformer_lm.py \
 
 Full training checkpoints are distinct from model-only checkpoints. They
 include parameters, complete optimizer state, update count, training
-configuration, training-sampler RNG state, tokenizer vocabulary, corpus
-identity hashes, best-validation metadata, history, mode, and seed. Writes use
-atomic replacement. The loader rejects partial or incompatible state.
+configuration, training-sampler RNG state, complete versioned tokenizer
+state/hash, raw and encoded corpus identity hashes, best-validation metadata,
+history, mode, and seed. Writes use atomic replacement. The loader rejects
+partial or incompatible state. Resume restores its checkpoint tokenizer before
+encoding and never refits it; conflicting CLI tokenizer selections are errors.
 
 The transformer experiment writes latest, best, and final full training
 checkpoints; a final model-only checkpoint; tokenizer JSON; history JSON; and a
@@ -396,6 +474,31 @@ Run the transparent quantitative overfit fixture with:
 ```bash
 python3 experiments/overfit_tiny_transformer.py
 ```
+
+### Tokenizer inspection and comparison
+
+Inspect the first deterministic merges learned from `banana bandana`:
+
+```bash
+python3 experiments/inspect_bpe_tokenizer.py
+```
+
+The script records UTF-8 bytes, every early pair-count table, tie-breaking,
+selected merges, token sequences, recursive byte expansions, exact round trip,
+and sequence-length statistics.
+
+Run a controlled integration study:
+
+```bash
+python3 experiments/compare_tokenizers.py --steps 12
+```
+
+Character, byte, and BPE runs use the same raw chronological split, seed,
+update count, batch/context shape, model dimensions, and optimizer settings.
+The report includes vocabulary size, merges, token/byte ratios, runtimes,
+parameter count, losses, generation, checkpoint reload, and sampled bits per
+byte. Token-level perplexity is reported within each run but is **not directly
+compared across tokenizers**, because their token units differ.
 
 ## Transformer architecture interface
 
@@ -572,6 +675,33 @@ Generation recomputes the most recent context window at every step and creates
 no backward cache. It supports batches, greedy decoding, seeded sampling, and
 stable top-\(k\) filtering. There is no KV cache.
 
+Current model-only experiment checkpoints bundle tokenizer state, so text
+generation can restore both together:
+
+```python
+from localml_scholar import (
+    TransformerLanguageModel,
+    generate_transformer_text,
+)
+
+model, tokenizer = TransformerLanguageModel.load_checkpoint_with_tokenizer(
+    "outputs/transformer_local/final_model.npz"
+)
+text = generate_transformer_text(
+    model,
+    tokenizer,
+    "local",
+    max_new_tokens=40,
+    temperature=0.8,
+    top_k=10,
+    seed=7,
+    decode_errors="replace",
+)
+```
+
+`errors="replace"` is explicit because arbitrary byte/BPE samples may not form
+valid UTF-8. Tokenizer `decode` itself remains strict by default.
+
 ## Repository structure
 
 ```text
@@ -583,17 +713,17 @@ docs/
   numerical_precision.md Float32/float64 policy
   audits/                 Evidence-backed milestone audits
   derivations/           Math connected to source functions
-experiments/             Bigram, XOR, transformer training, and inspections
+experiments/             Training, inspections, and controlled comparisons
 src/localml_scholar/
-  data.py                 Splits, examples, restorable sequence minibatches
-  tokenizer.py            Character tokenizer
+  data.py                 Split-before-fit, corpus identity, sequence batches
+  tokenizer.py            Character, byte, and byte-level BPE tokenizers
   losses.py               N-D stable softmax and indexed cross-entropy
   nn/                     Layers, single/multi-head attention, FFN, decoder
   optim/                  SGD, momentum, and Adam
   training/               Transformer trainer, clipping, finite differences
   optimizers.py           Milestone 1 compatibility SGD
   generation.py           Bigram and transformer autoregressive sampling
-  serialization.py        Atomic NPZ persistence
+  serialization.py        Atomic NPZ and text persistence
   utils.py                Bigram checks and reporting utilities
   models/bigram.py        Trainable bigram model
   models/mlp.py           Two-layer foundation model
@@ -615,21 +745,29 @@ Mathematical details are in:
 - [pre-norm decoder block](docs/derivations/pre_norm_decoder_block.md)
 - [transformer language model](docs/derivations/transformer_language_model.md)
 - [transformer training and generation](docs/derivations/transformer_training_and_generation.md)
+- [tokenization and byte-pair encoding](docs/derivations/tokenization_and_bpe.md)
 - [Milestone 1 audit](docs/audits/milestone_1_audit.md)
 - [Milestone 2 attention-readiness audit](docs/audits/milestone_2_attention_readiness_audit.md)
 - [Milestone 3 decoder-block readiness audit](docs/audits/milestone_3_decoder_block_readiness_audit.md)
 - [Milestone 4 transformer-readiness audit](docs/audits/milestone_4_transformer_readiness_audit.md)
 - [Milestone 5 training-readiness audit](docs/audits/milestone_5_training_readiness_audit.md)
 - [Milestone 5 multi-head-readiness audit](docs/audits/milestone_5_multi_head_readiness_audit.md)
+- [Milestone 6 tokenizer/corpus-readiness audit](docs/audits/milestone_6_tokenizer_corpus_readiness_audit.md)
 
 ## Limitations
 
 - One character of context cannot represent syntax, semantics, paper
   structure, notation, or factual evidence.
-- Character tokenization is inefficient for a later language model and has no
-  unknown-token policy.
+- Character tokenization is sequence-inefficient and has no unknown-token
+  policy.
 - A validation-only character causes an explicit error because the tokenizer
   is intentionally fit on training text only.
+- Byte and BPE generation can form invalid UTF-8. Strict decoding raises;
+  user-facing generation must opt into a documented display policy.
+- The independent BPE trainer and encoder are transparent reference
+  implementations, not optimized for large corpora or merge tables.
+- There is no configurable Unicode normalization and no BOS, EOS, PAD, UNK, or
+  MASK token. No-normalization is deliberate and recorded in state.
 - Transformer minibatches are sampled with replacement; the trainer does not
   implement epochs, learning-rate schedules, or early stopping.
 - The bigram experiment does not save optimizer or sampler resume state.
@@ -643,7 +781,8 @@ Mathematical details are in:
 - There is no dropout, rotary representation, KV cache, FlashAttention,
   mixed-precision path, weight tying, or optimized kernel.
 - Transformer training, evaluation, full-state resume, and generation are
-  implemented, but only tiny deterministic character fixtures have been run.
+  implemented, but only tiny deterministic character/byte/BPE fixtures have
+  been run.
 - Learned positions impose a fixed maximum context length.
 - Attention uses \(O(T^2)\) score/probability storage. Generation recomputes
   the cropped context and has no KV cache or optimized kernel.
@@ -654,13 +793,11 @@ Mathematical details are in:
 
 ## Roadmap
 
-The next milestone is to improve the language-modeling foundation through
-tokenizer and corpus infrastructure, beginning with a byte-level or
-independently implemented BPE tokenizer, padding-aware batching if needed, and
-controlled training experiments before adding paper retrieval. Local PDF
-parsing, retrieval, licensed ML-paper specialization, evidence-based
-evaluation, an application, and measured performance work remain later
-milestones.
+The next recommended milestone is to build document ingestion and retrieval
+independently of the language model: parse local text and PDF-derived content,
+preserve source metadata and section boundaries, chunk documents
+deterministically, compute a transparent retrieval baseline, and return cited
+passages before attempting answer generation.
 
 See [the full roadmap](docs/roadmap.md) and
 [the architecture](docs/architecture.md).

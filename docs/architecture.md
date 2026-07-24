@@ -43,12 +43,14 @@ decorative feature.
 
 ## Implemented package boundaries
 
-Milestones 1 through 6 establish interfaces that later components can
+Milestones 1 through 7 establish interfaces that later components can
 extend:
 
-- `tokenizer.py` owns text/token conversion and vocabulary persistence.
-- `data.py` owns local loading, chronological splits, examples, and seeded
-  minibatches.
+- `tokenizer.py` owns the minimal tokenizer contract, character/byte/BPE text
+  conversion, deterministic BPE fitting, vocabulary persistence, and tokenizer
+  identity hashes.
+- `data.py` owns strict UTF-8 loading, raw chronological split-before-fit,
+  corpus identity metadata, examples, and seeded minibatches.
 - `losses.py` owns explicit numerical forward/backward primitives.
 - `nn/` owns explicit `Parameter`/`Module` foundations, initializers, layers,
   activations, normalization, sequential composition, causal masks, stable
@@ -61,9 +63,10 @@ extend:
   differences.
 - `models/` composes primitives into checkpointable models.
 - `optimizers.py` remains the Milestone 1 named-array SGD compatibility path.
-- `generation.py` owns bigram and transformer autoregressive sampling
-  independently of training.
-- `serialization.py` owns atomic NPZ replacement without model dependencies.
+- `generation.py` owns bigram and tokenizer-aware transformer autoregressive
+  sampling independently of training.
+- `serialization.py` owns atomic NPZ and UTF-8 text replacement without model
+  dependencies.
 - `utils.py` owns reproducibility, reporting math, and the bigram-specific
   compatibility gradient check.
 - `experiments/` composes library pieces into reproducible runs but is not
@@ -219,10 +222,55 @@ every decoder block, and the vocabulary head. `number_of_heads` is part of the
 complete checkpointed configuration. The public state loader validates every
 key, shape, dtype, and finite value before changing any parameter.
 
-Version 0.6.0 recognizes 0.5.0 single-head model checkpoints and 0.5.1 full
-training checkpoints. It adds `number_of_heads=1` in memory because the fused
-one-head parameter names, order, and shapes are identical. Unknown versions
-and incompatible state remain errors.
+Version 0.7.0 recognizes 0.5.0 and 0.6.0 model checkpoints plus 0.5.1 and 0.6.0
+full training checkpoints. Single-head legacy configuration migration still
+adds `number_of_heads=1` in memory. Legacy character vocabularies migrate into
+the unified tokenizer schema without changing IDs. Unknown versions and
+incompatible state remain errors.
+
+## Tokenizer and corpus architecture
+
+Tokenization is now an explicit subsystem in front of integer sequence
+batching:
+
+```text
+strict UTF-8 text
+        ↓ no normalization
+chronological raw-text split
+        ├── training text ── fit character vocabulary or BPE merges
+        └── validation text
+        ↓ encode both splits independently
+isolated int64 token streams
+        ↓
+SequenceBatchSampler
+```
+
+`Tokenizer` is deliberately smaller than a general tokenization framework.
+Concrete implementations share deterministic encode/decode, vocabulary size,
+byte expansion, versioned state, transactional loading, and a canonical
+SHA-256 state hash:
+
+- `CharacterTokenizer` maps sorted training Unicode code points and rejects an
+  unseen code point.
+- `ByteTokenizer` maps every UTF-8 byte directly to IDs `0..255`.
+- `BytePairTokenizer` starts from the same 256 bytes and adds contiguous binary
+  merge tokens in deterministic rank order.
+
+The only normalization identifier is `none`; exact code points, whitespace, and
+newlines are preserved. Byte/BPE decoders use strict UTF-8 by default.
+User-facing generation explicitly opts into replacement display because
+arbitrary sampled bytes may not form valid UTF-8.
+
+BPE training counts pairs within each document, selects highest frequency then
+the lexicographically smallest tied pair, and replaces occurrences left to
+right without overlap. The encoder repeatedly applies the highest-priority
+currently available learned rule. This reference implementation favors
+inspection over large-corpus speed.
+
+`CorpusMetadata` records raw character and byte counts, UTF-8 content hash,
+logical source, document count, split policy, tokenizer type/hash, vocabulary
+size, and per-split token counts. Corpus contents are not stored in a
+checkpoint.
 
 ## Training, evaluation, generation, and checkpoint architecture
 
@@ -257,12 +305,14 @@ most recent configured context, and recomputes the retained context at every
 new token. Greedy decoding, positive temperature, and stable top-\(k\)
 sampling are supported. There is no KV cache.
 
-Model-only checkpoints preserve architecture and parameters for inference.
-Full training checkpoints additionally preserve optimizer tensors and step,
-training configuration, sampler RNG state, tokenizer vocabulary, corpus
-identity hashes, best-validation state, history, mode, clipping/decay policy,
-and seed. Full checkpoint replacement is atomic, and loading reconstructs
-fresh objects before returning a usable trainer.
+Model-only checkpoints preserve architecture and parameters for inference and
+may bundle complete tokenizer identity. Full training checkpoints additionally
+preserve optimizer tensors and step, training configuration, sampler RNG state,
+complete tokenizer state/hash, raw and encoded corpus identity hashes,
+best-validation state, history, mode, clipping/decay policy, and seed. Full
+checkpoint replacement is atomic, and loading reconstructs fresh objects before
+returning a usable trainer. Resume restores its tokenizer before corpus
+encoding and never refits it.
 
 ## Current models
 
@@ -303,8 +353,14 @@ understanding.
 Milestone 6 replaces the decoder's canonical attention path with fused
 multi-head causal attention while preserving `H=1` exactly. Training,
 evaluation, autoregressive generation, model checkpoints, and exact full-state
-resumption support multiple heads. The tokenizer and experimental corpora
-remain deliberately small and character-level.
+resumption support multiple heads.
+
+Milestone 7 generalizes the token boundary without changing any transformer
+operation or gradient. Character, fixed byte, and independently trained
+byte-level BPE tokenizers now share a versioned contract. Controlled experiments
+fit learned tokenizers on training text only, report raw token measures and
+sampled bits per byte, and preserve tokenizer identity through model and full
+training checkpoints. The model and corpora remain deliberately tiny.
 
 ## Future module constraints
 

@@ -24,10 +24,16 @@ from localml_scholar.data import (  # noqa: E402
     load_utf8_text,
     prepare_token_stream_dataset,
 )
-from localml_scholar.generation import generate_transformer_ids  # noqa: E402
+from localml_scholar.generation import generate_transformer_text  # noqa: E402
 from localml_scholar.models.transformer_lm import (  # noqa: E402
     TransformerConfig,
     TransformerLanguageModel,
+)
+from localml_scholar.tokenizer import (  # noqa: E402
+    BPETrainingConfig,
+    BytePairTokenizer,
+    Tokenizer,
+    load_tokenizer,
 )
 from localml_scholar.training.config import (  # noqa: E402
     TransformerTrainingConfig,
@@ -45,16 +51,28 @@ def _decode_generation(
     length: int,
     seed: int,
 ) -> str:
-    prompt_ids = trainer.tokenizer.encode(prompt)[None, :]
-    generated = generate_transformer_ids(
+    return generate_transformer_text(
         trainer.model,
-        prompt_ids,
+        trainer.tokenizer,
+        prompt,
         max_new_tokens=length,
         temperature=0.8,
         top_k=min(10, trainer.tokenizer.vocabulary_size),
         seed=seed,
+        decode_errors="replace",
     )
-    return trainer.tokenizer.decode(generated[0])
+
+
+def _new_run_tokenizer(args: argparse.Namespace) -> str | Tokenizer:
+    tokenizer_name = args.tokenizer or "character"
+    if args.tokenizer_load is None:
+        return tokenizer_name
+    tokenizer = load_tokenizer(args.tokenizer_load)
+    if args.tokenizer is not None and args.tokenizer != tokenizer.tokenizer_type:
+        raise ValueError(
+            "--tokenizer conflicts with the supplied --tokenizer-load file."
+        )
+    return tokenizer
 
 
 def run_training(args: argparse.Namespace) -> dict[str, Any]:
@@ -66,7 +84,60 @@ def run_training(args: argparse.Namespace) -> dict[str, Any]:
     else:
         text = load_utf8_text(args.input)
         corpus_source = str(args.input)
-    dataset = prepare_token_stream_dataset(text, args.train_fraction)
+    if args.resume is None:
+        selected_tokenizer = _new_run_tokenizer(args)
+    else:
+        if args.tokenizer_load is not None:
+            raise ValueError(
+                "--tokenizer-load cannot be combined with --resume; the "
+                "checkpoint owns tokenizer identity."
+            )
+        selected_tokenizer = TransformerTrainer.load_checkpoint_tokenizer(args.resume)
+        if (
+            args.tokenizer is not None
+            and args.tokenizer != selected_tokenizer.tokenizer_type
+        ):
+            raise ValueError(
+                "--tokenizer conflicts with the tokenizer restored from --resume."
+            )
+    bpe_options_supplied = any(
+        value is not None
+        for value in (
+            args.bpe_vocabulary_size,
+            args.bpe_minimum_frequency,
+            args.bpe_maximum_merges,
+        )
+    )
+    if isinstance(selected_tokenizer, Tokenizer):
+        if bpe_options_supplied:
+            raise ValueError(
+                "BPE fitting options cannot be combined with a loaded or "
+                "checkpoint-restored tokenizer."
+            )
+        bpe_config = None
+    elif selected_tokenizer == "bpe":
+        bpe_config = BPETrainingConfig(
+            target_vocabulary_size=(
+                300 if args.bpe_vocabulary_size is None else args.bpe_vocabulary_size
+            ),
+            minimum_pair_frequency=(
+                2 if args.bpe_minimum_frequency is None else args.bpe_minimum_frequency
+            ),
+            maximum_merges=args.bpe_maximum_merges,
+        )
+    else:
+        if bpe_options_supplied:
+            raise ValueError(
+                "BPE fitting options require --tokenizer bpe on a new run."
+            )
+        bpe_config = None
+    dataset = prepare_token_stream_dataset(
+        text,
+        args.train_fraction,
+        tokenizer=selected_tokenizer,
+        bpe_config=bpe_config,
+        source_name=corpus_source,
+    )
     output_directory = args.output.resolve()
     output_directory.mkdir(parents=True, exist_ok=True)
     model_config = TransformerConfig(
@@ -102,6 +173,7 @@ def run_training(args: argparse.Namespace) -> dict[str, Any]:
             dataset.train_tokens,
             dataset.validation_tokens,
             training_config,
+            raw_corpus_metadata=dataset.metadata.to_dict(),
         )
         resumed_from = None
     else:
@@ -112,6 +184,7 @@ def run_training(args: argparse.Namespace) -> dict[str, Any]:
             tokenizer=dataset.tokenizer,
             expected_model_config=model_config,
             expected_training_config=training_config,
+            raw_corpus_metadata=dataset.metadata.to_dict(),
         )
         resumed_from = str(args.resume)
 
@@ -135,9 +208,15 @@ def run_training(args: argparse.Namespace) -> dict[str, Any]:
         output_directory / "final_training_checkpoint.npz"
     )
     final_model_checkpoint = trainer.model.save_checkpoint(
-        output_directory / "final_model.npz"
+        output_directory / "final_model.npz",
+        tokenizer=trainer.tokenizer,
     )
-    tokenizer_path = dataset.tokenizer.save(output_directory / "tokenizer.json")
+    tokenizer_destination = (
+        args.tokenizer_save.resolve()
+        if args.tokenizer_save is not None
+        else output_directory / "tokenizer.json"
+    )
+    tokenizer_path = trainer.tokenizer.save(tokenizer_destination)
     history_path = output_directory / "history.json"
     history_path.write_text(
         json.dumps(trainer.history, indent=2, ensure_ascii=False) + "\n",
@@ -151,6 +230,7 @@ def run_training(args: argparse.Namespace) -> dict[str, Any]:
         tokenizer=dataset.tokenizer,
         expected_model_config=model_config,
         expected_training_config=training_config,
+        raw_corpus_metadata=dataset.metadata.to_dict(),
     )
     best_generation = _decode_generation(
         reloaded_best,
@@ -159,7 +239,7 @@ def run_training(args: argparse.Namespace) -> dict[str, Any]:
         args.seed + int(reloaded_best.best_validation_step or 0),
     )
     summary: dict[str, Any] = {
-        "milestone": 6,
+        "milestone": 7,
         "package_version": __version__,
         "corpus_source": corpus_source,
         "corpus_characters": len(text),
@@ -167,6 +247,18 @@ def run_training(args: argparse.Namespace) -> dict[str, Any]:
         "train_tokens": int(dataset.train_tokens.size),
         "validation_tokens": int(dataset.validation_tokens.size),
         "tokenizer_vocabulary_size": dataset.tokenizer.vocabulary_size,
+        "tokenizer": {
+            "type": dataset.tokenizer.tokenizer_type,
+            "normalization": dataset.tokenizer.normalization,
+            "vocabulary_size": dataset.tokenizer.vocabulary_size,
+            "state_sha256": dataset.tokenizer.state_hash(),
+            "learned_merges": (
+                len(dataset.tokenizer.merge_rules)
+                if isinstance(dataset.tokenizer, BytePairTokenizer)
+                else 0
+            ),
+        },
+        "corpus_metadata": dataset.metadata.to_dict(),
         "model_configuration": model_config.to_dict(),
         "training_configuration": training_config.to_dict(),
         "parameter_count": trainer.model.parameter_count,
@@ -221,6 +313,17 @@ def parse_args(arguments: Sequence[str] | None = None) -> argparse.Namespace:
         default=PROJECT_ROOT / "outputs" / "transformer_lm_smoke",
     )
     parser.add_argument("--train-fraction", type=float, default=0.9)
+    parser.add_argument(
+        "--tokenizer",
+        choices=("character", "byte", "bpe"),
+        default=None,
+        help="Defaults to character for a new run; resume restores its checkpoint.",
+    )
+    parser.add_argument("--tokenizer-load", type=Path, default=None)
+    parser.add_argument("--tokenizer-save", type=Path, default=None)
+    parser.add_argument("--bpe-vocabulary-size", type=int, default=None)
+    parser.add_argument("--bpe-minimum-frequency", type=int, default=None)
+    parser.add_argument("--bpe-maximum-merges", type=int, default=None)
     parser.add_argument("--context-length", type=int, default=8)
     parser.add_argument("--batch-size", type=int, default=4)
     parser.add_argument("--model-dimension", type=int, default=8)

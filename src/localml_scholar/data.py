@@ -12,7 +12,13 @@ from typing import Any
 import numpy as np
 from numpy.typing import NDArray
 
-from localml_scholar.tokenizer import CharacterTokenizer
+from localml_scholar.tokenizer import (
+    BPETrainingConfig,
+    BytePairTokenizer,
+    ByteTokenizer,
+    CharacterTokenizer,
+    Tokenizer,
+)
 
 IntArray = NDArray[np.int64]
 
@@ -38,10 +44,60 @@ class BigramDataset:
 class TokenStreamDataset:
     """Chronologically isolated token streams for sequence language modeling."""
 
-    tokenizer: CharacterTokenizer
+    tokenizer: Tokenizer
     train_tokens: IntArray
     validation_tokens: IntArray
     split_index: int
+    metadata: CorpusMetadata
+
+
+@dataclass(frozen=True)
+class CorpusMetadata:
+    """Deterministic identity and encoding facts without corpus contents."""
+
+    source_name: str
+    character_count: int
+    byte_count: int
+    content_sha256: str
+    document_count: int
+    split_policy: str
+    train_fraction: float
+    split_index: int
+    train_character_count: int
+    validation_character_count: int
+    train_byte_count: int
+    validation_byte_count: int
+    tokenizer_type: str
+    tokenizer_state_sha256: str
+    vocabulary_size: int
+    train_token_count: int
+    validation_token_count: int
+    normalization: str
+    encoding: str = "utf-8"
+
+    def to_dict(self) -> dict[str, Any]:
+        """Return an exact JSON-compatible representation."""
+        return {
+            "source_name": self.source_name,
+            "character_count": self.character_count,
+            "byte_count": self.byte_count,
+            "content_sha256": self.content_sha256,
+            "document_count": self.document_count,
+            "split_policy": self.split_policy,
+            "train_fraction": self.train_fraction,
+            "split_index": self.split_index,
+            "train_character_count": self.train_character_count,
+            "validation_character_count": self.validation_character_count,
+            "train_byte_count": self.train_byte_count,
+            "validation_byte_count": self.validation_byte_count,
+            "tokenizer_type": self.tokenizer_type,
+            "tokenizer_state_sha256": self.tokenizer_state_sha256,
+            "vocabulary_size": self.vocabulary_size,
+            "train_token_count": self.train_token_count,
+            "validation_token_count": self.validation_token_count,
+            "normalization": self.normalization,
+            "encoding": self.encoding,
+        }
 
 
 def load_utf8_text(path: str | Path) -> str:
@@ -104,15 +160,22 @@ def prepare_bigram_dataset(text: str, train_fraction: float) -> BigramDataset:
 def prepare_token_stream_dataset(
     text: str,
     train_fraction: float,
+    *,
+    tokenizer: str | Tokenizer = "character",
+    bpe_config: BPETrainingConfig | None = None,
+    source_name: str = "in_memory",
 ) -> TokenStreamDataset:
-    """Create isolated chronological token streams with a train-only vocabulary.
+    """Split raw text first, fit if needed on training only, then encode.
 
     The character at ``split_index - 1`` belongs only to training and the
     character at ``split_index`` belongs only to validation. Sequence samplers
     operate on these streams independently, so no boundary target is created.
+    Character vocabularies and BPE merges are fitted only on ``train_text``.
     """
     if not isinstance(text, str):
         raise TypeError(f"text must be str, received {type(text).__name__}.")
+    if not isinstance(source_name, str) or not source_name:
+        raise ValueError("source_name must be a non-empty string.")
     validate_train_fraction(train_fraction)
     if len(text) < 4:
         raise ValueError(
@@ -129,21 +192,83 @@ def prepare_token_stream_dataset(
 
     train_text = text[:split_index]
     validation_text = text[split_index:]
-    tokenizer = CharacterTokenizer.from_text(train_text)
-    train_tokens = tokenizer.encode(train_text)
+    resolved_tokenizer: Tokenizer
+    if isinstance(tokenizer, str):
+        if tokenizer == "character":
+            if bpe_config is not None:
+                raise ValueError(
+                    "bpe_config may be supplied only with tokenizer='bpe'."
+                )
+            resolved_tokenizer = CharacterTokenizer.from_text(train_text)
+        elif tokenizer == "byte":
+            if bpe_config is not None:
+                raise ValueError(
+                    "bpe_config may be supplied only with tokenizer='bpe'."
+                )
+            resolved_tokenizer = ByteTokenizer()
+        elif tokenizer == "bpe":
+            configuration = bpe_config or BPETrainingConfig()
+            resolved_tokenizer = BytePairTokenizer.train(
+                train_text,
+                configuration,
+            )
+        else:
+            raise ValueError("tokenizer must be 'character', 'byte', or 'bpe'.")
+    elif isinstance(tokenizer, Tokenizer):
+        if bpe_config is not None:
+            raise ValueError(
+                "bpe_config cannot be supplied with a fitted tokenizer instance."
+            )
+        resolved_tokenizer = tokenizer
+    else:
+        raise TypeError(
+            "tokenizer must be a tokenizer type string or Tokenizer instance."
+        )
+
+    train_tokens = resolved_tokenizer.encode(train_text)
     try:
-        validation_tokens = tokenizer.encode(validation_text)
+        validation_tokens = resolved_tokenizer.encode(validation_text)
     except ValueError as error:
+        if isinstance(resolved_tokenizer, CharacterTokenizer):
+            raise ValueError(
+                "Validation text contains characters absent from the chronological "
+                "training split. Byte and BPE tokenizers avoid unknown characters."
+            ) from error
+        raise
+    if train_tokens.size < 2 or validation_tokens.size < 2:
         raise ValueError(
-            "Validation text contains characters absent from the chronological "
-            "training split. Choose a representative training split or handle "
-            "unknown tokens in a later tokenizer milestone."
-        ) from error
+            "Each encoded split must contain at least two tokens; choose a "
+            "longer corpus, a less extreme split, or a less compressive tokenizer."
+        )
+    raw_bytes = text.encode("utf-8")
+    train_bytes = train_text.encode("utf-8")
+    validation_bytes = validation_text.encode("utf-8")
+    metadata = CorpusMetadata(
+        source_name=source_name,
+        character_count=len(text),
+        byte_count=len(raw_bytes),
+        content_sha256=hashlib.sha256(raw_bytes).hexdigest(),
+        document_count=1,
+        split_policy="chronological_code_points_split_before_tokenizer_fit",
+        train_fraction=float(train_fraction),
+        split_index=split_index,
+        train_character_count=len(train_text),
+        validation_character_count=len(validation_text),
+        train_byte_count=len(train_bytes),
+        validation_byte_count=len(validation_bytes),
+        tokenizer_type=resolved_tokenizer.tokenizer_type,
+        tokenizer_state_sha256=resolved_tokenizer.state_hash(),
+        vocabulary_size=resolved_tokenizer.vocabulary_size,
+        train_token_count=int(train_tokens.size),
+        validation_token_count=int(validation_tokens.size),
+        normalization=resolved_tokenizer.normalization,
+    )
     return TokenStreamDataset(
-        tokenizer=tokenizer,
+        tokenizer=resolved_tokenizer,
         train_tokens=train_tokens,
         validation_tokens=validation_tokens,
         split_index=split_index,
+        metadata=metadata,
     )
 
 

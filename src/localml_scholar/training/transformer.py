@@ -24,7 +24,7 @@ from localml_scholar.optim.base import Optimizer
 from localml_scholar.optim.momentum import Momentum
 from localml_scholar.optim.sgd import SGD
 from localml_scholar.serialization import atomic_savez
-from localml_scholar.tokenizer import CharacterTokenizer
+from localml_scholar.tokenizer import Tokenizer, tokenizer_from_state_dict
 from localml_scholar.training.clipping import (
     clip_grad_norm,
     global_gradient_norm,
@@ -165,24 +165,24 @@ def evaluate_language_model(
 class TransformerTrainer:
     """Own deterministic sampler, optimizer, metrics, and full training state."""
 
-    CHECKPOINT_VERSION = 2
-    LEGACY_CHECKPOINT_VERSION = 1
-    LEGACY_PACKAGE_VERSION = "0.5.1"
+    CHECKPOINT_VERSION = 3
+    LEGACY_CHECKPOINT_IDENTITIES = frozenset({(1, "0.5.1"), (2, "0.6.0")})
 
     def __init__(
         self,
         model: TransformerLanguageModel,
-        tokenizer: CharacterTokenizer,
+        tokenizer: Tokenizer,
         train_tokens: NDArray[np.integer],
         validation_tokens: NDArray[np.integer],
         config: TransformerTrainingConfig,
         *,
         optimizer: Optimizer | None = None,
+        raw_corpus_metadata: Mapping[str, Any] | None = None,
     ) -> None:
         if not isinstance(model, TransformerLanguageModel):
             raise TypeError("model must be a TransformerLanguageModel.")
-        if not isinstance(tokenizer, CharacterTokenizer):
-            raise TypeError("tokenizer must be a CharacterTokenizer.")
+        if not isinstance(tokenizer, Tokenizer):
+            raise TypeError("tokenizer must implement the Tokenizer interface.")
         if not isinstance(config, TransformerTrainingConfig):
             raise TypeError("config must be a TransformerTrainingConfig.")
         if tokenizer.vocabulary_size != model.config.vocabulary_size:
@@ -191,6 +191,29 @@ class TransformerTrainer:
         self.model = model
         self.tokenizer = tokenizer
         self.config = config
+        if raw_corpus_metadata is None:
+            self.raw_corpus_metadata: dict[str, Any] | None = None
+        else:
+            if not isinstance(raw_corpus_metadata, Mapping):
+                raise TypeError("raw_corpus_metadata must be a mapping or None.")
+            candidate_metadata = dict(raw_corpus_metadata)
+            try:
+                serialized_metadata = json.dumps(
+                    candidate_metadata,
+                    ensure_ascii=False,
+                    sort_keys=True,
+                    allow_nan=False,
+                )
+            except (TypeError, ValueError) as error:
+                raise ValueError(
+                    "raw_corpus_metadata must be JSON-serializable."
+                ) from error
+            if json.loads(serialized_metadata) != candidate_metadata:
+                raise ValueError(
+                    "raw_corpus_metadata must use exact JSON-compatible types "
+                    "with string object keys."
+                )
+            self.raw_corpus_metadata = candidate_metadata
         self.train_tokens = _validated_token_stream(
             train_tokens,
             name="train_tokens",
@@ -246,12 +269,15 @@ class TransformerTrainer:
     @property
     def corpus_metadata(self) -> dict[str, Any]:
         """Return identity metadata for both isolated token streams."""
-        return {
+        metadata: dict[str, Any] = {
             "train_token_count": int(self.train_tokens.size),
             "train_sha256": _token_stream_digest(self.train_tokens),
             "validation_token_count": int(self.validation_tokens.size),
             "validation_sha256": _token_stream_digest(self.validation_tokens),
         }
+        if self.raw_corpus_metadata is not None:
+            metadata["raw_corpus"] = dict(self.raw_corpus_metadata)
+        return metadata
 
     def train_step(self) -> TrainingStepMetrics:
         """Run one complete explicit forward/backward/update cycle."""
@@ -427,11 +453,8 @@ class TransformerTrainer:
             "best_validation_step": self.best_validation_step,
             "training_configuration": self.config.to_dict(),
             "sampler_state": self.train_sampler.state_dict(),
-            "tokenizer": {
-                "format_version": self.tokenizer.FORMAT_VERSION,
-                "type": "character",
-                "characters": list(self.tokenizer.characters),
-            },
+            "tokenizer": self.tokenizer.state_dict(),
+            "tokenizer_state_sha256": self.tokenizer.state_hash(),
             "corpus": self.corpus_metadata,
             "history": self.history,
             "seed": self.config.seed,
@@ -464,7 +487,8 @@ class TransformerTrainer:
         *,
         train_tokens: NDArray[np.integer],
         validation_tokens: NDArray[np.integer],
-        tokenizer: CharacterTokenizer,
+        tokenizer: Tokenizer | None = None,
+        raw_corpus_metadata: Mapping[str, Any] | None = None,
         expected_model_config: TransformerConfig | None = None,
         expected_training_config: TransformerTrainingConfig | None = None,
     ) -> TransformerTrainer:
@@ -491,7 +515,7 @@ class TransformerTrainer:
             ) from None
         if not isinstance(metadata, dict):
             raise ValueError("Training checkpoint metadata must be an object.")
-        expected_metadata_keys = {
+        base_metadata_keys = {
             "checkpoint_version",
             "package_version",
             "checkpoint_type",
@@ -510,7 +534,8 @@ class TransformerTrainer:
             "seed",
             "weight_decay_convention",
         }
-        if set(metadata) != expected_metadata_keys:
+        current_metadata_keys = base_metadata_keys | {"tokenizer_state_sha256"}
+        if set(metadata) not in (base_metadata_keys, current_metadata_keys):
             raise ValueError(
                 "Training checkpoint metadata keys do not match the expected format."
             )
@@ -520,18 +545,19 @@ class TransformerTrainer:
             checkpoint_version == cls.CHECKPOINT_VERSION
             and package_version == __version__
         )
-        is_legacy = (
-            checkpoint_version == cls.LEGACY_CHECKPOINT_VERSION
-            and package_version == cls.LEGACY_PACKAGE_VERSION
-        )
+        identity = (checkpoint_version, package_version)
+        is_legacy = identity in cls.LEGACY_CHECKPOINT_IDENTITIES
         if not is_current and not is_legacy:
             raise ValueError(
                 "Unsupported training checkpoint schema: "
                 f"checkpoint_version={checkpoint_version!r}, "
                 f"package_version={package_version!r}. Expected current "
-                f"({cls.CHECKPOINT_VERSION}, {__version__!r}) or legacy "
-                f"single-head ({cls.LEGACY_CHECKPOINT_VERSION}, "
-                f"{cls.LEGACY_PACKAGE_VERSION!r})."
+                f"({cls.CHECKPOINT_VERSION}, {__version__!r}) or a supported "
+                f"legacy identity {sorted(cls.LEGACY_CHECKPOINT_IDENTITIES)!r}."
+            )
+        if is_current and set(metadata) != current_metadata_keys:
+            raise ValueError(
+                "Current training checkpoint is missing tokenizer identity metadata."
             )
         if metadata.get("checkpoint_type") != "transformer_training":
             raise ValueError("Checkpoint is not a full transformer training state.")
@@ -545,7 +571,7 @@ class TransformerTrainer:
 
         model_config = TransformerConfig.from_dict(
             metadata.get("model_configuration"),
-            allow_legacy_single_head=is_legacy,
+            allow_legacy_single_head=identity == (1, "0.5.1"),
         )
         training_config = TransformerTrainingConfig.from_dict(
             metadata.get("training_configuration")
@@ -568,15 +594,31 @@ class TransformerTrainer:
             raise ValueError(
                 "Training checkpoint training configuration is incompatible."
             )
-        tokenizer_metadata = metadata.get("tokenizer")
-        expected_tokenizer_metadata = {
-            "format_version": tokenizer.FORMAT_VERSION,
-            "type": "character",
-            "characters": list(tokenizer.characters),
-        }
-        if tokenizer_metadata != expected_tokenizer_metadata:
+        try:
+            checkpoint_tokenizer = tokenizer_from_state_dict(metadata.get("tokenizer"))
+        except (TypeError, ValueError) as error:
             raise ValueError(
-                "Training checkpoint tokenizer vocabulary is incompatible."
+                "Training checkpoint tokenizer state is invalid."
+            ) from error
+        stored_tokenizer_hash = metadata.get("tokenizer_state_sha256")
+        if (
+            stored_tokenizer_hash is not None
+            and stored_tokenizer_hash != checkpoint_tokenizer.state_hash()
+        ):
+            raise ValueError("Training checkpoint tokenizer hash is inconsistent.")
+        if tokenizer is not None and not isinstance(tokenizer, Tokenizer):
+            raise TypeError(
+                "tokenizer must implement the Tokenizer interface or be None."
+            )
+        if (
+            tokenizer is not None
+            and tokenizer.state_dict() != checkpoint_tokenizer.state_dict()
+        ):
+            raise ValueError("Training checkpoint tokenizer identity is incompatible.")
+        restored_tokenizer = checkpoint_tokenizer if tokenizer is None else tokenizer
+        if restored_tokenizer.vocabulary_size != model_config.vocabulary_size:
+            raise ValueError(
+                "Training checkpoint tokenizer and model vocabulary sizes differ."
             )
 
         train_stream = _validated_token_stream(
@@ -589,14 +631,24 @@ class TransformerTrainer:
             name="validation_tokens",
             vocabulary_size=model_config.vocabulary_size,
         )
-        expected_corpus = {
+        expected_corpus: dict[str, Any] = {
             "train_token_count": int(train_stream.size),
             "train_sha256": _token_stream_digest(train_stream),
             "validation_token_count": int(validation_stream.size),
             "validation_sha256": _token_stream_digest(validation_stream),
         }
-        if metadata.get("corpus") != expected_corpus:
+        stored_corpus = metadata.get("corpus")
+        if not isinstance(stored_corpus, Mapping):
+            raise ValueError("Training checkpoint corpus metadata is malformed.")
+        stored_raw_metadata = stored_corpus.get("raw_corpus")
+        if stored_raw_metadata is not None:
+            expected_corpus["raw_corpus"] = stored_raw_metadata
+        if dict(stored_corpus) != expected_corpus:
             raise ValueError("Training checkpoint corpus identity is incompatible.")
+        if raw_corpus_metadata is not None and stored_raw_metadata != dict(
+            raw_corpus_metadata
+        ):
+            raise ValueError("Training checkpoint raw corpus identity is incompatible.")
 
         model_state = {
             name.removeprefix("model::"): values
@@ -622,10 +674,11 @@ class TransformerTrainer:
         model.load_state_dict(model_state)
         trainer = cls(
             model,
-            tokenizer,
+            restored_tokenizer,
             train_stream,
             validation_stream,
             training_config,
+            raw_corpus_metadata=stored_raw_metadata,
         )
         optimizer_metadata = metadata.get("optimizer_state")
         if not isinstance(optimizer_metadata, Mapping):
@@ -680,3 +733,60 @@ class TransformerTrainer:
         else:
             trainer.model.eval()
         return trainer
+
+    @classmethod
+    def load_checkpoint_tokenizer(cls, path: str | Path) -> Tokenizer:
+        """Restore only tokenizer identity for split-aware resume preparation."""
+        source = Path(path)
+        try:
+            with np.load(source, allow_pickle=False) as checkpoint:
+                if "metadata_json" not in checkpoint.files:
+                    raise ValueError("Training checkpoint is missing metadata_json.")
+                try:
+                    metadata = json.loads(str(checkpoint["metadata_json"]))
+                except json.JSONDecodeError as error:
+                    raise ValueError(
+                        "Training checkpoint metadata is not valid JSON."
+                    ) from error
+        except FileNotFoundError:
+            raise FileNotFoundError(
+                f"Training checkpoint does not exist: {source}"
+            ) from None
+        if not isinstance(metadata, dict):
+            raise ValueError("Training checkpoint metadata must be an object.")
+        if metadata.get("checkpoint_type") != "transformer_training":
+            raise ValueError("Checkpoint is not a full transformer training state.")
+        checkpoint_version = metadata.get("checkpoint_version")
+        package_version = metadata.get("package_version")
+        identity = (checkpoint_version, package_version)
+        is_current = (
+            checkpoint_version == cls.CHECKPOINT_VERSION
+            and package_version == __version__
+        )
+        if not is_current and identity not in cls.LEGACY_CHECKPOINT_IDENTITIES:
+            raise ValueError(
+                "Unsupported training checkpoint schema: "
+                f"checkpoint_version={checkpoint_version!r}, "
+                f"package_version={package_version!r}."
+            )
+        try:
+            tokenizer = tokenizer_from_state_dict(metadata.get("tokenizer"))
+        except (TypeError, ValueError) as error:
+            raise ValueError(
+                "Training checkpoint tokenizer state is invalid."
+            ) from error
+        stored_hash = metadata.get("tokenizer_state_sha256")
+        if is_current and stored_hash is None:
+            raise ValueError(
+                "Current training checkpoint is missing its tokenizer state hash."
+            )
+        if stored_hash is not None and stored_hash != tokenizer.state_hash():
+            raise ValueError("Training checkpoint tokenizer hash is inconsistent.")
+        model_configuration = metadata.get("model_configuration")
+        if not isinstance(model_configuration, Mapping):
+            raise ValueError("Training checkpoint model configuration is malformed.")
+        if model_configuration.get("vocabulary_size") != tokenizer.vocabulary_size:
+            raise ValueError(
+                "Training checkpoint tokenizer and model vocabulary sizes differ."
+            )
+        return tokenizer
