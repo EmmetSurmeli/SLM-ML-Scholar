@@ -189,20 +189,45 @@ Status: complete and verified.
 
 The five-query fixture validates implementation behavior only. It does not
 establish general retrieval quality. Direct PDF extraction, semantic search,
-reranking, and answer generation remain absent.
+reranking, and answer generation were absent at this stage.
 
 ## Milestone 9 — Controlled grounded answer generation
 
+Status: complete and verified.
+
+- deterministic answer-oriented BM25/TF-IDF evidence selection
+- meaningful-term filtering, range-overlap suppression, and source diversity
+- transparent evidence-sufficiency gate with deterministic abstention
+- exact tokenizer-aware grounded prompts with quoted-document isolation
+- trusted top-passage and sentence-level extractive baselines
+- explicit local-checkpoint transformer generation with raw output retention
+- strict inline `[C#]` parsing and exact evidence/citation bindings
+- claim segmentation, complete citation coverage, and source-range validation
+- transparent term, number, identifier, equation-symbol, negation, and exact
+  quote diagnostics
+- strict generated-answer acceptance and optional extractive fallback
+- versioned atomic grounded-answer artifacts
+- authored answerability, citation, support, content, causality, code,
+  numerical, synonym, and prompt-injection fixtures
+- extractive, generative, and controlled method-comparison experiments
+- human/JSON answer CLI with evidence inspection and artifact saving
+
+The deterministic extractive path is the trusted baseline. Citation linkage
+and lexical support heuristics do not prove semantic truth or entailment. No
+useful generative checkpoint is assumed.
+
+## Milestone 10 — Semantic retrieval extension
+
 Next recommended milestone:
 
-> Connect retrieval to controlled grounded answer generation: construct prompts from ranked passages, require inline citations, enforce source-only answering, evaluate citation correctness and answer faithfulness, and compare the project’s own transformer against a deterministic extractive baseline before considering semantic embeddings.
+> Add semantic retrieval as a separately evaluated extension: implement or integrate a transparent local embedding baseline, compare it against BM25 on synonym and paraphrase queries, add hybrid retrieval and deterministic reranking, and preserve exact citations and grounded-answer validation.
 
-Keep the retriever independently testable, preserve exact source passages in
-the prompt record, and treat refusal on insufficient evidence as required
-behavior. Do not claim that generated prose is grounded merely because context
-was supplied; evaluate every citation and supported claim.
+Keep BM25 as an independently tested baseline. Record model provenance,
+licensing, local resource costs, deterministic behavior, and retrieval
+ablations. Do not let vector similarity replace exact source passage and
+citation validation.
 
-## Milestone 10 — Correctness reference
+## Milestone 11 — Correctness reference
 
 Only after the independent implementation works:
 
@@ -215,7 +240,7 @@ Only after the independent implementation works:
 
 The reference must not become the source of the manual implementation.
 
-## Milestone 11 — ML-paper specialization
+## Milestone 12 — ML-paper specialization
 
 Build a legally usable, versioned training and evaluation corpus from:
 
@@ -241,7 +266,7 @@ Target capabilities:
 - limitation analysis
 - reproduction planning
 
-## Milestone 12 — Evaluation
+## Milestone 13 — Evaluation
 
 Create a manually reviewed benchmark with:
 
@@ -266,7 +291,7 @@ Compare:
 Factuality evaluation must point to exact page-level evidence in the supplied
 paper. Record annotator instructions and disagreement.
 
-## Milestone 13 — Local application
+## Milestone 14 — Local application
 
 Build a lightweight local interface for:
 
@@ -281,7 +306,7 @@ Build a lightweight local interface for:
 
 Define the local privacy boundary and storage paths in the interface.
 
-## Milestone 14 — Performance optimization
+## Milestone 15 — Performance optimization
 
 Profile before optimizing. Potential targets include:
 

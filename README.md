@@ -21,9 +21,9 @@ framework or automatic-differentiation system. This is an educational and
 engineering constraint, not a claim that a from-scratch model is automatically
 faster or more capable.
 
-## Current status: Milestone 8
+## Current status: Milestone 9
 
-The package version is `0.8.0`.
+The package version is `0.9.0`.
 
 Milestone 1 is complete and independently audited. Its character-level bigram
 learns a \(V\times V\) table of next-character logits and conditions only on
@@ -194,20 +194,46 @@ framework. The original source remains distinct from case-folded index terms.
 PDF bytes are not parsed: the adapter accepts text and page numbers produced by
 an explicitly separate extraction step.
 
+Milestone 9 connects retrieval to controlled answer production:
+
+- deterministic answer-oriented BM25/TF-IDF evidence selection
+- exact source-range overlap suppression and answer-local `C#` labels
+- transparent evidence-sufficiency checks and deterministic abstention
+- tokenizer-aware quoted-evidence prompts with control instructions outside
+  document text
+- a transformer-independent sentence-level extractive baseline
+- optional grounded generation from an explicitly supplied local checkpoint
+- mandatory inline citations and exact citation-to-passage validation
+- claim-level citation coverage and conservative lexical support diagnostics
+- number, identifier, equation-symbol, negation, and exact-quote checks
+- rejected generation with raw output retention and optional explicit
+  extractive fallback
+- versioned atomic answer artifacts, authored fixtures, metrics, experiments,
+  and a human/JSON answer CLI
+
+The deterministic extractive path is the trusted baseline. The project
+transformer is small, not instruction tuned, and may produce poor or malformed
+answers. Generative answers are validated and may be rejected. A valid
+citation proves linkage to one exact retrieved passage; it does not prove the
+claim is semantically true. Likewise, lexical support heuristics do not prove
+entailment.
+
 The model remains tiny, educational, CPU-oriented, and unoptimized. Every
 neural-network gradient is manually implemented; there is no PyTorch, autograd,
 or external training framework.
 
-The project is **still not a useful SLM and not yet a complete research-paper
-assistant**. The
+The project is now an **early paper-assistant prototype, not a production
+research assistant**. The
 bigram cannot understand a paper, explain an equation, retrieve evidence, or
 maintain context beyond one character. The MLP is a synthetic integration
 fixture; the attention head and decoder block are numerical and causality
 fixtures. The trained transformer has only been evaluated on tiny deterministic
-character fixtures. Milestone 8 can retrieve lexical matches with exact
-provenance, but it does not understand passages or generate answers. These
-experiments establish implementation behavior, not language understanding,
-paper-assistance capability, or general retrieval quality.
+character fixtures. Milestone 9 can produce cited extractive answers and can
+validate output from an explicit local checkpoint, but it does not understand
+passages, prove truth, or supply a useful pretrained model. These experiments
+establish implementation behavior, not general language understanding,
+paper-assistance capability, or retrieval quality. No external LLM, API,
+semantic embedding, vector database, or web search is used.
 
 ## Installation
 
@@ -255,7 +281,12 @@ and exact tokenizer resumption. Milestone 8 covers ingestion, heading
 hierarchies, PDF-derived pages, exact offsets, overlap and reconstruction,
 lexical spans, hand-computed TF-IDF/BM25 values, deterministic scored ties,
 filters, citations, malformed index rejection, metrics, CLIs, and exact
-search preservation after reload.
+search preservation after reload. Milestone 9 covers evidence ordering,
+score/range filtering, sufficiency and abstention, exact source extraction,
+prompt budgeting with byte/BPE tokenizers, prompt-injection-like source text,
+strict citation parsing, claim attachment and coverage, number/negation/symbol
+diagnostics, raw generation retention, acceptance/fallback, index/evidence
+hash revalidation, answer artifacts, authored metrics, CLIs, and experiments.
 
 ### Verified implementation
 
@@ -278,6 +309,22 @@ python3 experiments/inspect_bpe_tokenizer.py
 python3 experiments/compare_tokenizers.py --steps 12
 python3 experiments/inspect_document_ingestion.py
 python3 experiments/compare_retrievers.py
+python3 experiments/evaluate_extractive_answering.py \
+  --output-directory outputs/m9_extractive_evaluation
+python3 experiments/evaluate_grounded_generation.py \
+  --checkpoint outputs/m9_random_checkpoint/random_model.npz \
+  --maximum-new-tokens 1 \
+  --method generative_with_extractive_fallback \
+  --output-directory outputs/m9_grounded_generation_smoke
+python3 experiments/compare_answer_methods.py \
+  --checkpoint outputs/m9_random_checkpoint/random_model.npz \
+  --maximum-new-tokens 1 \
+  --output-directory outputs/m9_answer_method_comparison
+PYTHONPATH=src python3 -m localml_scholar.answering.cli \
+  --index outputs/m9_extractive_evaluation/fixture_index.json \
+  --question "How does causal masking prevent leakage?" \
+  --method extractive --retriever bm25 --top-k 5 --verbose \
+  --save outputs/m9_answer_cli/answer.json
 PYTHONPATH=src python3 -m localml_scholar.retrieval.search build \
   --sources tests/fixtures/retrieval/attention.md \
     tests/fixtures/retrieval/optimization.md \
@@ -343,7 +390,7 @@ PYTHONPATH=src python3 -c \
 ```
 
 Ruff 0.15.18 reported no lint or formatting errors, `git diff --check` was
-clean, and pytest 9.1.1 reported `481 passed in 6.59s`.
+clean, and pytest 9.1.1 reported `532 passed in 3.20s`.
 The 300-step fallback-corpus smoke run used 2,094 training examples, 232
 validation examples, a 23-character vocabulary, and 529 parameters. Its best
 sampled validation loss was `1.5488034950125846` (perplexity
@@ -435,6 +482,35 @@ after index reload. The serialized index was 24,260 bytes. These values validate
 only this deliberately simple deterministic fixture and are not evidence of
 general retrieval quality.
 
+The Milestone 9 authored fixture contains 10 questions over 4 project-authored
+documents and 14 chunks. The deterministic extractive baseline made all 10
+answer/abstain decisions correctly: 8 answer attempts and 2 correct
+abstentions, including the deliberately unsupported synonym/paraphrase query.
+Citation validity, claim citation coverage, and citation recall were `1.0`;
+citation precision and source-location correctness were `0.9`; supported-claim
+rate was `1.0`; authored key-fact recall was `0.85`; prohibited claims,
+unsupported claims, numerical mismatches, and negation warnings were `0`.
+Answerable-question BM25 retrieval measured Precision@1 `1.0`, Precision@3
+`0.4583333333333333`, Recall@3 `1.0`, MRR `1.0`, and Hit Rate@3 `1.0`.
+These are transparent fixture measurements, not evidence of general grounded
+QA quality or semantic understanding.
+
+The explicit-checkpoint rejection smoke used an untrained, randomly
+initialized 12,446-parameter float32 transformer with a byte tokenizer, one
+head, and a 2,500-token context. With one greedy new token, all 8 answerable
+generations were invalid and generative acceptance was `0.0`; raw replacement
+characters were retained and the validated fallback was used for all 8.
+The 2 insufficient questions abstained before generation. This deliberately
+poor result verifies rejection, raw-output preservation, and fallback
+plumbing. It is not a trained-model result.
+
+The controlled four-method run used that same random checkpoint and evidence
+fixture. Top-passage and sentence extraction had citation coverage `1.0` and
+key-fact recall `0.9` and `0.85`; plain generation had citation coverage `0.2`,
+key-fact recall `0.2`, and generative rejection rate `1.0`; fallback restored
+the extractive metrics and recorded fallback rate `0.8` over all questions.
+No claim is made that this random model represents useful generative quality.
+
 ## Document ingestion and lexical retrieval
 
 Build an immutable index from explicit local text and Markdown sources:
@@ -501,6 +577,62 @@ document = ingest_pdf_text(
 
 This API does not read PDF bytes, perform OCR, repair reading order, or infer
 layout. Page numbers and text are trusted only as supplied by the caller.
+
+## Grounded local answering
+
+Extractive mode requires an index but no transformer:
+
+```bash
+PYTHONPATH=src python3 -m localml_scholar.answering.cli \
+  --index outputs/local_documents/index.json \
+  --question "How does causal masking prevent leakage?" \
+  --method extractive \
+  --retriever bm25 \
+  --top-k 5 \
+  --verbose
+```
+
+It selects exact evidence, checks lexical sufficiency, copies relevant source
+sentences without paraphrasing, appends mandatory `[C#]` labels, and validates
+every label against the immutable index. An insufficient query returns a fixed
+abstention and does not call a model.
+
+Use `--json` for the complete structured state and `--save` for an atomic
+artifact. See [the answer CLI](docs/answering_cli.md) and
+[answer artifact format](docs/answer_artifact_format.md).
+
+Grounded generation requires an explicit model-only checkpoint containing its
+matching tokenizer:
+
+```bash
+PYTHONPATH=src python3 -m localml_scholar.answering.cli \
+  --index outputs/local_documents/index.json \
+  --question "How does causal masking prevent leakage?" \
+  --method generative-with-extractive-fallback \
+  --checkpoint outputs/trained_model/final_model.npz \
+  --greedy
+```
+
+No useful checkpoint is bundled or assumed. Raw model output is retained.
+Unknown citations, uncited claims, numerical mismatches, obvious support
+failures, or malformed output cause rejection. Fallback mode records that
+failure and returns a separately validated extractive answer.
+
+Run the trusted authored-fixture baseline independently:
+
+```bash
+python3 experiments/evaluate_extractive_answering.py
+```
+
+Generative and four-method comparison experiments require `--checkpoint`;
+without one they exit clearly and do not fabricate results:
+
+```bash
+python3 experiments/evaluate_grounded_generation.py \
+  --checkpoint outputs/trained_model/final_model.npz
+python3 experiments/compare_answer_methods.py \
+  --checkpoint outputs/trained_model/final_model.npz
+```
 
 ## Training
 
@@ -831,6 +963,8 @@ docs/
   numerical_precision.md Float32/float64 policy
   retrieval_cli.md       Build, inspect, and cited-search commands
   retrieval_index_format.md Versioned immutable JSON schema
+  answering_cli.md       Cited extractive/generative answer commands
+  answer_artifact_format.md Versioned grounded-answer JSON schema
   audits/                 Evidence-backed milestone audits
   derivations/           Math connected to source functions
 experiments/             Training, inspections, and controlled comparisons
@@ -842,6 +976,7 @@ src/localml_scholar/
   optim/                  SGD, momentum, and Adam
   training/               Transformer trainer, clipping, finite differences
   retrieval/              Ingestion, exact chunks, TF-IDF/BM25, citations, CLI
+  answering/              Evidence, answer methods, citations, validation, CLI
   optimizers.py           Milestone 1 compatibility SGD
   generation.py           Bigram and transformer autoregressive sampling
   serialization.py        Atomic NPZ and text persistence
@@ -868,8 +1003,11 @@ Mathematical details are in:
 - [transformer training and generation](docs/derivations/transformer_training_and_generation.md)
 - [tokenization and byte-pair encoding](docs/derivations/tokenization_and_bpe.md)
 - [document ingestion and lexical retrieval](docs/derivations/document_ingestion_and_lexical_retrieval.md)
+- [grounded answer generation](docs/derivations/grounded_answer_generation.md)
 - [retrieval CLI](docs/retrieval_cli.md)
 - [retrieval index format](docs/retrieval_index_format.md)
+- [answer CLI](docs/answering_cli.md)
+- [answer artifact format](docs/answer_artifact_format.md)
 - [Milestone 1 audit](docs/audits/milestone_1_audit.md)
 - [Milestone 2 attention-readiness audit](docs/audits/milestone_2_attention_readiness_audit.md)
 - [Milestone 3 decoder-block readiness audit](docs/audits/milestone_3_decoder_block_readiness_audit.md)
@@ -878,6 +1016,7 @@ Mathematical details are in:
 - [Milestone 5 multi-head-readiness audit](docs/audits/milestone_5_multi_head_readiness_audit.md)
 - [Milestone 6 tokenizer/corpus-readiness audit](docs/audits/milestone_6_tokenizer_corpus_readiness_audit.md)
 - [Milestone 7 retrieval-readiness audit](docs/audits/milestone_7_retrieval_readiness_audit.md)
+- [Milestone 8 grounded-generation-readiness audit](docs/audits/milestone_8_grounded_generation_readiness_audit.md)
 
 ## Limitations
 
@@ -924,8 +1063,23 @@ Mathematical details are in:
   vector database, semantic reranker, stemming, or phrase model.
 - The reference search scans every chunk and stores overlapping text in a
   human-inspectable JSON snapshot; it is not optimized for large collections.
-- Retrieval returns cited source passages only. It does not summarize,
-  explain, or generate an answer.
+- Evidence sufficiency is a thresholded lexical heuristic and can answer weak
+  matches or abstain on valid synonym/paraphrase questions.
+- Extractive answers preserve source truthfully but may omit the most useful
+  sentence, include awkward chunk-boundary text, or lack fluent synthesis.
+- A valid citation proves exact source linkage, not that the associated claim
+  is true, complete, or entailed.
+- Term/number/identifier/symbol/negation diagnostics have false positives and
+  false negatives and are not semantic entailment.
+- The local transformer is not instruction tuned, and no useful grounded QA
+  checkpoint is bundled. It may emit unsupported text, malformed citations,
+  invalid UTF-8 bytes, or incomplete sentences.
+- Prompt controls structurally isolate quoted source text, but this is not a
+  claim of complete prompt-injection security.
+- Grounded prompts must fit the fixed learned context with generation
+  allowance. Lowest-ranked evidence is removed before exact source truncation.
+- There is no external fact verification, semantic embedding, hybrid
+  retrieval, vector database, or neural reranker.
 - Generated bigram or tiny-transformer text should not be interpreted as
   meaningful general language.
 
@@ -933,7 +1087,7 @@ Mathematical details are in:
 
 The next recommended milestone is:
 
-> Connect retrieval to controlled grounded answer generation: construct prompts from ranked passages, require inline citations, enforce source-only answering, evaluate citation correctness and answer faithfulness, and compare the project’s own transformer against a deterministic extractive baseline before considering semantic embeddings.
+> Add semantic retrieval as a separately evaluated extension: implement or integrate a transparent local embedding baseline, compare it against BM25 on synonym and paraphrase queries, add hybrid retrieval and deterministic reranking, and preserve exact citations and grounded-answer validation.
 
 See [the full roadmap](docs/roadmap.md) and
 [the architecture](docs/architecture.md).

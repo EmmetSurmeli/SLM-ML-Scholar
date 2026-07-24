@@ -1,6 +1,19 @@
-"""LocalML Scholar's manual language-model and deterministic retrieval components."""
+"""Manual local language-model, retrieval, and grounded-answer components."""
 
 from localml_scholar._version import __version__
+from localml_scholar.answering import (
+    AnswerAcceptanceConfig,
+    AnswerValidation,
+    EvidenceItem,
+    EvidenceSelectionConfig,
+    EvidenceSufficiency,
+    ExtractiveAnswerer,
+    GroundedAnswer,
+    GroundedAnswerPipeline,
+    GroundedGenerativeAnswerer,
+    load_grounded_answer,
+    save_grounded_answer,
+)
 from localml_scholar.data import CorpusMetadata, TokenStreamDataset
 from localml_scholar.generation import (
     generate_transformer_ids,
@@ -53,6 +66,8 @@ from localml_scholar.training.transformer import TransformerTrainer
 
 __all__ = [
     "BigramLanguageModel",
+    "AnswerAcceptanceConfig",
+    "AnswerValidation",
     "BM25Config",
     "BPETrainingConfig",
     "BytePairTokenizer",
@@ -64,8 +79,15 @@ __all__ = [
     "Citation",
     "CorpusMetadata",
     "Document",
+    "EvidenceItem",
+    "EvidenceSelectionConfig",
+    "EvidenceSufficiency",
+    "ExtractiveAnswerer",
     "generate_transformer_ids",
     "generate_transformer_text",
+    "GroundedAnswer",
+    "GroundedAnswerPipeline",
+    "GroundedGenerativeAnswerer",
     "IndexConfig",
     "ingest_file",
     "ingest_files",
@@ -73,6 +95,7 @@ __all__ = [
     "ingest_pdf_text",
     "ingest_plain_text",
     "LexicalTokenizerConfig",
+    "load_grounded_answer",
     "load_tokenizer",
     "MergeRule",
     "MLP",
@@ -82,6 +105,7 @@ __all__ = [
     "PreNormDecoderBlock",
     "RetrievalIndex",
     "save_tokenizer",
+    "save_grounded_answer",
     "SearchFilters",
     "SearchQuery",
     "SearchResult",

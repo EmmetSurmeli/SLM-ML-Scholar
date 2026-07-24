@@ -43,7 +43,7 @@ decorative feature.
 
 ## Implemented package boundaries
 
-Milestones 1 through 8 establish interfaces that later components can
+Milestones 1 through 9 establish interfaces that later components can
 extend:
 
 - `tokenizer.py` owns the minimal tokenizer contract, character/byte/BPE text
@@ -65,6 +65,10 @@ extend:
   retrieval-only lexical tokenization, independently implemented TF-IDF and
   BM25, structured citations, metrics, immutable index snapshots, and the
   build/inspect/search CLI. It imports no model or training component.
+- `answering/` owns evidence selection, sufficiency, source-isolated prompts,
+  extractive and explicit-checkpoint generative paths, inline citations,
+  claim diagnostics, acceptance/fallback, evaluation, answer artifacts, and
+  the answer CLI.
 - `models/` composes primitives into checkpointable models.
 - `optimizers.py` remains the Milestone 1 named-array SGD compatibility path.
 - `generation.py` owns bigram and tokenizer-aware transformer autoregressive
@@ -153,6 +157,63 @@ BM25 is the default lexical method; TF-IDF cosine is a separately implemented
 baseline. Both return only positive-score passages and transparent per-term
 evidence. Neither invokes answer generation. There are no embeddings, vector
 database, semantic reranker, or external retrieval framework.
+
+## Current grounded-answer architecture
+
+Milestone 9 adds a controlled orchestration layer without merging retrieval
+and model responsibilities:
+
+```text
+question + immutable RetrievalIndex
+        ↓ explicit BM25 or TF-IDF search
+positive meaningful-term SearchResults
+        ↓ range overlap, diversity, and character budget
+ordered exact EvidenceItems C1...Cn
+        ↓ lexical sufficiency gate
+        ├── insufficient → fixed abstention (no generation)
+        └── sufficient
+              ├── exact sentence extraction + citations
+              └── tokenizer-budgeted quoted evidence prompt
+                        ↓ explicit local checkpoint
+                    raw generated tokens/text
+        ↓
+claim segmentation + citation/source linkage + support diagnostics
+        ↓
+accepted, rejected, or explicit extractive fallback
+        ↓
+versioned atomic GroundedAnswer JSON
+```
+
+`EvidenceItem` binds an answer-local label to the exact selected source range,
+structured citation, selected-text hash, and immutable index hash. Selection
+cannot retrieve outside the returned lexical result set. Overlap suppression
+uses source offsets rather than vector similarity.
+
+The sufficiency gate reports evidence count, top score, meaningful matched
+terms, query-term coverage, source count, and threshold reasons. It controls
+whether an answer is attempted but does not claim factual sufficiency.
+
+Extractive answering is transformer-independent and copies exact source spans.
+It is the trusted baseline. Generative answering requires a model checkpoint
+containing the matching tokenizer. The complete prompt plus generation
+allowance must fit the learned context limit; ordinary generation cropping is
+forbidden on this path.
+
+Controls occur before and after explicitly quoted evidence. Document text is
+never parsed as application configuration. This provides structural isolation
+for instruction-like source text, supplemented by strict output validation;
+it is not a complete prompt-injection security claim.
+
+Inline labels use `[C1]` or comma-separated groups. Claim coverage requires a
+known citation after every substantive claim. Validation rechecks exact
+document ranges, index and evidence hashes, term support, numbers, selected
+identifiers, simple equation symbols, and simple negation. These transparent
+heuristics catch obvious failures but do not prove entailment.
+
+Plain generative mode preserves rejected output and reasons. Fallback mode
+also preserves that state, then returns a separately validated extractive
+answer and marks the artifact as a fallback. Insufficient evidence never calls
+the model.
 
 ## Current attention architecture
 
@@ -275,7 +336,7 @@ every decoder block, and the vocabulary head. `number_of_heads` is part of the
 complete checkpointed configuration. The public state loader validates every
 key, shape, dtype, and finite value before changing any parameter.
 
-The 0.8.0 package retains the 0.7.0 model schema. Its loaders recognize 0.5.0
+The 0.9.0 package retains the 0.7.0 model schema. Its loaders recognize 0.5.0
 and 0.6.0 model checkpoints plus 0.5.1 and 0.6.0 full training checkpoints.
 Single-head legacy configuration migration still adds `number_of_heads=1` in
 memory. Legacy character vocabularies migrate into the unified tokenizer
@@ -419,8 +480,14 @@ training checkpoints. The model and corpora remain deliberately tiny.
 Milestone 8 adds an independent evidence-retrieval system rather than another
 model layer. It ingests local text/Markdown or externally extracted PDF page
 text, preserves exact source slices, and ranks cited chunks with transparent
-TF-IDF or BM25. It does not feed those passages to the transformer and does not
-generate an answer.
+TF-IDF or BM25.
+
+Milestone 9 connects that index to controlled answer production. Its trusted
+baseline copies exact selected source sentences with mandatory citations. An
+explicit project-transformer checkpoint can instead receive a tokenizer-fitted
+grounded prompt, but its output is retained and validated rather than assumed
+correct. Insufficient evidence produces no answer attempt; invalid generation
+is rejected or explicitly replaced by an extractive fallback.
 
 ## Future module constraints
 
