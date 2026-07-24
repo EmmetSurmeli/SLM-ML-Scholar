@@ -103,17 +103,38 @@ Status: complete and verified.
 Part 1 deliberately adds no training loop, transformer generation, sampling,
 evaluation, multi-head attention, or performance optimization.
 
+### Part 2: deterministic training and generation
+
+Status: complete and verified.
+
+- validated immutable transformer training configuration
+- restorable random-with-replacement sequence batching
+- explicit full-model training steps with N-D cross-entropy
+- coupled L2 weight decay and global norm clipping
+- fixed-seed train/validation evaluation isolated from training RNG
+- recursive no-cache inference lifecycle with strict training guards
+- greedy, temperature, and stable top-\(k\) autoregressive generation
+- atomic model, optimizer, and full training checkpoints
+- exact interrupted-versus-uninterrupted Adam resumption
+- deterministic tiny-pattern overfitting
+- configurable character-corpus training and resume CLI
+
+The verified model remains a tiny, character-level, single-head educational
+transformer. Part 2 adds no multi-head attention, retrieval, or paper
+assistant.
+
 ## Milestone 6 — Multi-head causal self-attention
 
-Implement multi-head causal self-attention by splitting the model dimension
-across independently validated heads, concatenating their outputs, applying an
-output projection, and validating the complete multi-head backward pass before
-scaling transformer training.
+Implement independently validated multi-head causal self-attention, prove that
+the one-head configuration matches the existing attention path, integrate it
+into decoder blocks and the trained language model, and compare capacity and
+training behavior without changing the tokenizer or retrieval scope.
 
-Keep the first fixtures tiny enough to check every input and parameter
-coordinate. Do not combine multi-head attention with training-system changes.
+Keep the first fixtures small enough to check every input and parameter
+coordinate. Preserve the verified Milestone 5 Part 2 training and checkpoint
+interfaces.
 
-## Milestone 7 — Tokenization and training
+## Milestone 7 — Tokenization and scaled training
 
 Add:
 

@@ -22,6 +22,7 @@ from localml_scholar.nn.transformer import (
     residual_add,
     residual_add_backward,
 )
+from localml_scholar.serialization import atomic_savez
 
 _CHECKPOINT_VERSION = 1
 _MODEL_VERSION = "0.5.0"
@@ -407,8 +408,7 @@ class TransformerLanguageModel(Module):
         }
         for name, values in self.state_dict().items():
             arrays[f"parameter::{name}"] = values
-        np.savez(destination, **arrays)
-        return destination
+        return atomic_savez(destination, arrays)
 
     @classmethod
     def load_checkpoint(cls, path: str | Path) -> TransformerLanguageModel:

@@ -91,6 +91,7 @@ class Adam(Optimizer):
         if step_count < 0:
             raise ValueError("Adam checkpoint step_count cannot be negative.")
 
+        validated: list[tuple[np.ndarray, np.ndarray]] = []
         for index, parameter in enumerate(self.parameters):
             first = arrays[f"first_moment::{index}"]
             second = arrays[f"second_moment::{index}"]
@@ -107,6 +108,13 @@ class Adam(Optimizer):
                         f"Adam {state_name} {index} has invalid shape, "
                         "dtype, or values."
                     )
+            validated.append((first, second))
+
+        for parameter, (first, second) in zip(
+            self.parameters,
+            validated,
+            strict=True,
+        ):
             self._first_moment[parameter][...] = first
             self._second_moment[parameter][...] = second
         self.step_count = step_count

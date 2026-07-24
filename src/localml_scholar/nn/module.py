@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from collections.abc import Iterator
+from contextlib import contextmanager
 from typing import Any
 
 import numpy as np
@@ -156,6 +157,42 @@ class Module:
         self._forward_cache = None
         for child in self._modules.values():
             child.clear_cache()
+
+    @contextmanager
+    def inference_mode(self) -> Iterator[Module]:
+        """Temporarily enable recursive no-cache evaluation forwards.
+
+        Entering is rejected if any training forward is awaiting backward.
+        Every module's prior mode is restored even if inference raises.
+        """
+        if self.has_pending_cache():
+            raise RuntimeError(
+                "Cannot enter inference mode while a forward cache is pending."
+            )
+        modules: list[Module] = []
+
+        def collect(module: Module) -> None:
+            modules.append(module)
+            for child in module._modules.values():
+                collect(child)
+
+        collect(self)
+        previous_modes = tuple(module.training for module in modules)
+        for module in modules:
+            module._training = False
+        try:
+            yield self
+        finally:
+            unexpected_cache = self.has_pending_cache()
+            if unexpected_cache:
+                self.clear_cache()
+            for module, previous in zip(modules, previous_modes, strict=True):
+                module._training = previous
+            if unexpected_cache:
+                raise RuntimeError(
+                    "Inference unexpectedly created a backward cache; caches "
+                    "were cleared before restoring module modes."
+                )
 
     def _store_forward_cache(self, cache: Any) -> None:
         if not self.training:

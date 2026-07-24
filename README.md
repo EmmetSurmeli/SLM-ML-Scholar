@@ -21,9 +21,9 @@ framework or automatic-differentiation system. This is an educational and
 engineering constraint, not a claim that a from-scratch model is automatically
 faster or more capable.
 
-## Current status: Milestone 5 Part 1
+## Current status: Milestone 5 Part 2
 
-The package version is `0.5.0`.
+The package version is `0.5.1`.
 
 Milestone 1 is complete and independently audited. Its character-level bigram
 learns a \(V\times V\) table of next-character logits and conditions only on
@@ -117,13 +117,34 @@ The public `TransformerLanguageModel` now exposes `forward`, `backward`,
 recursive parameters, state loading, checkpoints, and train/eval modes through
 the existing manual module conventions.
 
-The project is **still not an SLM and not yet a research-paper assistant**. The
+Milestone 5 Part 2 trains that exact architecture and adds:
+
+- validated transformer-only training configuration
+- uniformly sampled shifted character windows with restorable RNG state
+- explicit full-model forward, N-dimensional loss, backward, clipping, and
+  optimizer update cycles
+- deterministic train and validation evaluation that cannot advance the
+  training sampler
+- a recursive inference context that creates no backward caches
+- autoregressive greedy, temperature, and stable top-\(k\) generation
+- atomic model-only and full resumable training checkpoints
+- exact interrupted-versus-uninterrupted Adam continuation tests
+- a quantitative tiny-pattern overfit experiment
+- a configurable CPU-friendly local character-corpus training CLI
+
+The resulting fixture is the project's first trained decoder-only transformer
+language model. It remains character-level, single-head, tiny, educational,
+CPU-oriented, and unoptimized. Every neural-network gradient is still manually
+implemented; there is no PyTorch, autograd, or external training framework.
+
+The project is **still not a useful SLM and not yet a research-paper
+assistant**. The
 bigram cannot understand a paper, explain an equation, retrieve evidence, or
 maintain context beyond one character. The MLP is a synthetic integration
 fixture; the attention head and decoder block are numerical and causality
-fixtures. The transformer architecture has not been trained or evaluated and
-has no transformer generation or sampling interface. It therefore makes no
-language-understanding or paper-assistance claim.
+fixtures. The trained transformer has only been evaluated on tiny deterministic
+character fixtures. Those experiments establish training-system correctness,
+not language understanding or paper-assistance capability.
 
 ## Installation
 
@@ -158,7 +179,10 @@ controlled decoder fixtures, full decoder-block gradients, three optimizer
 integrations, learned positional accumulation, independent decoder stacking,
 top-level state atomicity, cross-entropy compatibility, multi-block causality,
 exhaustive transformer parameter gradients, dtype policy, cache misuse, and
-malformed inputs.
+malformed inputs. Milestone 5 Part 2 adds sequence-shift and sampler-state
+tests, no-cache inference checks, generation filtering and determinism,
+training/evaluation invariants, atomic full-state validation, exact interrupted
+resumption, and a bounded tiny-overfit integration test.
 
 ### Verified implementation
 
@@ -174,11 +198,29 @@ python3 experiments/train_bigram.py --config configs/bigram_small.json
 python3 experiments/train_mlp_xor.py
 python3 experiments/inspect_single_head_attention.py
 python3 experiments/inspect_pre_norm_decoder_block.py
+python3 experiments/overfit_tiny_transformer.py \
+  --steps 120 \
+  --output outputs/tiny_transformer_overfit_smoke
+python3 experiments/train_transformer_lm.py \
+  --steps 20 \
+  --until-step 10 \
+  --evaluation-interval 5 \
+  --checkpoint-interval 5 \
+  --generation-length 10 \
+  --output outputs/transformer_lm_resume_smoke
+python3 experiments/train_transformer_lm.py \
+  --steps 20 \
+  --until-step 20 \
+  --evaluation-interval 5 \
+  --checkpoint-interval 5 \
+  --generation-length 10 \
+  --output outputs/transformer_lm_resume_smoke \
+  --resume outputs/transformer_lm_resume_smoke/latest_training_checkpoint.npz
 PYTHONPATH=src python3 -c \
   "import localml_scholar; print(localml_scholar.__version__)"
 ```
 
-Ruff reported no lint or formatting errors, and pytest reported `219 passed`.
+Ruff reported no lint or formatting errors, and pytest reported `279 passed`.
 The 300-step fallback-corpus smoke run used 2,094 training examples, 232
 validation examples, a 23-character vocabulary, and 529 parameters. Its best
 sampled validation loss was `1.5488034950125846` (perplexity
@@ -209,11 +251,21 @@ The 134-parameter decoder fixture produced synthetic loss
 `5.861637709654549`, preserved earlier outputs after changing a future token,
 and updated at least one parameter.
 
-The transformer architecture adds no training or performance result. Its
-verification consists of controlled forward calculations, direct
-cross-entropy integration, multi-block causality, exact float32 checkpoint
-reload, and exhaustive finite differences across all 56 parameters of a tiny
-one-layer float64 configuration.
+The 575-parameter tiny transformer overfit experiment used the repeated
+character pattern `abc`, float32, one attention head, and an interruption at
+step 60. After resuming to step 120, sampled validation loss decreased from
+`2.0344989001750946` to `0.00043658849608618766`, perplexity decreased from
+`7.648418543862188` to `1.0004366838147147`, greedy transition agreement was
+`1.0`, and checkpoint-reloaded logits and generation were exact. This result
+shows that the manual components can learn one transparent repetitive fixture;
+it is not a language-quality result.
+
+The 931-parameter fallback-corpus transformer smoke run trained through step
+10, restored the full checkpoint, and continued to step 20. Its fixed-sample
+validation loss decreased from `3.3290658791859946` before training to
+`2.7723965644836426` (perplexity `15.996925771279688`). The best-checkpoint
+generation matched the final model at that step. This is plumbing and
+resumption evidence on a small bundled corpus, not a competitive benchmark.
 
 ## Training
 
@@ -246,8 +298,55 @@ The same configuration, corpus bytes, NumPy behavior, and environment produce
 the same random draws and update sequence. Evaluation is a reproducible
 minibatch estimate, not an exhaustive validation loss.
 
-This training script applies only to the Milestone 1 bigram. No transformer
-training loop is included in Milestone 5 Part 1.
+That script applies only to the Milestone 1 bigram.
+
+### Transformer training and exact resume
+
+Train the manual single-head transformer on a local UTF-8 corpus:
+
+```bash
+python3 experiments/train_transformer_lm.py \
+  --input data/raw/corpus.txt \
+  --steps 100 \
+  --output outputs/transformer_local
+```
+
+Omit `--input` only for the built-in smoke corpus. Defaults are deliberately
+small and CPU-friendly. Common architecture and training controls include
+`--context-length`, `--batch-size`, `--model-dimension`, `--layers`,
+`--key-dimension`, `--value-dimension`, `--feed-forward-dimension`,
+`--learning-rate`, evaluation/checkpoint intervals, prompt, generation length,
+and seed.
+
+For an intentional interruption/resumption check, configure the final maximum
+with `--steps` and stop the first invocation early with `--until-step`:
+
+```bash
+python3 experiments/train_transformer_lm.py \
+  --steps 20 --until-step 10 \
+  --output outputs/transformer_resume
+
+python3 experiments/train_transformer_lm.py \
+  --steps 20 --until-step 20 \
+  --output outputs/transformer_resume \
+  --resume outputs/transformer_resume/latest_training_checkpoint.npz
+```
+
+Full training checkpoints are distinct from model-only checkpoints. They
+include parameters, complete optimizer state, update count, training
+configuration, training-sampler RNG state, tokenizer vocabulary, corpus
+identity hashes, best-validation metadata, history, mode, and seed. Writes use
+atomic replacement. The loader rejects partial or incompatible state.
+
+The transformer experiment writes latest, best, and final full training
+checkpoints; a final model-only checkpoint; tokenizer JSON; history JSON; and a
+summary JSON. All generated artifacts are ignored by Git.
+
+Run the transparent quantitative overfit fixture with:
+
+```bash
+python3 experiments/overfit_tiny_transformer.py
+```
 
 ## Transformer architecture interface
 
@@ -280,8 +379,10 @@ loss, grad_logits = softmax_cross_entropy_loss_and_gradient(logits, targets)
 model.backward(grad_logits)
 ```
 
-This demonstrates interface compatibility only; it is not a training loop or
-a capability example.
+This is the low-level explicit update interface. `TransformerTrainer` composes
+the same calls with deterministic batching, evaluation, clipping, optimizer
+state, and checkpointing; it does not substitute another model
+implementation.
 
 ## XOR foundation demonstration
 
@@ -370,6 +471,32 @@ print(sample)
 Set `greedy=True` for argmax decoding. A fixed sampling seed makes stochastic
 generation reproducible.
 
+For transformer token-ID generation:
+
+```python
+import numpy as np
+
+from localml_scholar.generation import generate_transformer_ids
+from localml_scholar.models.transformer_lm import TransformerLanguageModel
+
+model = TransformerLanguageModel.load_checkpoint(
+    "outputs/transformer_local/final_model.npz"
+)
+prompt = np.array([[1, 4, 2]], dtype=np.int64)
+generated = generate_transformer_ids(
+    model,
+    prompt,
+    max_new_tokens=40,
+    temperature=0.8,
+    top_k=10,
+    seed=7,
+)
+```
+
+Generation recomputes the most recent context window at every step and creates
+no backward cache. It supports batches, greedy decoding, seeded sampling, and
+stable top-\(k\) filtering. There is no KV cache.
+
 ## Repository structure
 
 ```text
@@ -381,16 +508,17 @@ docs/
   numerical_precision.md Float32/float64 policy
   audits/                 Evidence-backed milestone audits
   derivations/           Math connected to source functions
-experiments/             Reproducible training and inspection scripts
+experiments/             Bigram, XOR, transformer training, and inspections
 src/localml_scholar/
-  data.py                 Local loading, splits, examples, minibatches
+  data.py                 Splits, examples, restorable sequence minibatches
   tokenizer.py            Character tokenizer
   losses.py               N-D stable softmax and indexed cross-entropy
   nn/                     Layers, attention, FFN, and one decoder block
   optim/                  SGD, momentum, and Adam
-  training/               Gradient clipping and finite differences
+  training/               Transformer trainer, clipping, finite differences
   optimizers.py           Milestone 1 compatibility SGD
-  generation.py           Autoregressive sampling
+  generation.py           Bigram and transformer autoregressive sampling
+  serialization.py        Atomic NPZ persistence
   utils.py                Bigram checks and reporting utilities
   models/bigram.py        Trainable bigram model
   models/mlp.py           Two-layer foundation model
@@ -410,10 +538,12 @@ Mathematical details are in:
 - [single-head causal attention](docs/derivations/single_head_causal_attention.md)
 - [pre-norm decoder block](docs/derivations/pre_norm_decoder_block.md)
 - [transformer language model](docs/derivations/transformer_language_model.md)
+- [transformer training and generation](docs/derivations/transformer_training_and_generation.md)
 - [Milestone 1 audit](docs/audits/milestone_1_audit.md)
 - [Milestone 2 attention-readiness audit](docs/audits/milestone_2_attention_readiness_audit.md)
 - [Milestone 3 decoder-block readiness audit](docs/audits/milestone_3_decoder_block_readiness_audit.md)
 - [Milestone 4 transformer-readiness audit](docs/audits/milestone_4_transformer_readiness_audit.md)
+- [Milestone 5 training-readiness audit](docs/audits/milestone_5_training_readiness_audit.md)
 
 ## Limitations
 
@@ -423,8 +553,8 @@ Mathematical details are in:
   unknown-token policy.
 - A validation-only character causes an explicit error because the tokenizer
   is intentionally fit on training text only.
-- Minibatches are sampled with replacement; the trainer does not yet implement
-  epochs, schedules, resume, or early stopping.
+- Transformer minibatches are sampled with replacement; the trainer does not
+  implement epochs, learning-rate schedules, or early stopping.
 - The bigram experiment does not save optimizer or sampler resume state.
 - The module system supports one unmatched training forward per layer and does
   not support shared/reused module instances in one graph.
@@ -435,24 +565,25 @@ Mathematical details are in:
   logits, but every block still uses one attention head.
 - There is no dropout, rotary representation, KV cache, FlashAttention,
   mixed-precision path, weight tying, or optimized kernel.
-- There is no transformer training loop, trained transformer checkpoint,
-  evaluation, sampling, or generation path.
+- Transformer training, evaluation, full-state resume, and generation are
+  implemented, but only tiny deterministic character fixtures have been run.
 - Learned positions impose a fixed maximum context length.
-- Attention uses \(O(T^2)\) score/probability storage and has no KV cache or
-  optimized kernel.
+- Attention uses \(O(T^2)\) score/probability storage. Generation recomputes
+  the cropped context and has no KV cache or optimized kernel.
 - The fallback corpus exists only for tests and smoke runs. It is not useful
   training data.
-- Generated bigram text should not be interpreted as meaningful language.
+- Generated bigram or tiny-transformer text should not be interpreted as
+  meaningful general language.
 
 ## Roadmap
 
-The next architectural milestone is multi-head causal self-attention: split
-the model dimension across independently validated heads, concatenate their
-outputs, apply an output projection, and validate the complete multi-head
-backward pass before scaling transformer training. Training, generation, local
-PDF parsing, retrieval, licensed ML-paper specialization, evidence-based
-evaluation, an application, and measured performance work remain later
-milestones.
+The next milestone is to implement independently validated multi-head causal
+self-attention, prove that its one-head configuration matches the existing
+path, integrate it into decoder blocks and the trained language model, and
+compare capacity and training behavior without changing tokenizer or retrieval
+scope. Local PDF parsing, retrieval, licensed ML-paper specialization,
+evidence-based evaluation, an application, and measured performance work
+remain later milestones.
 
 See [the full roadmap](docs/roadmap.md) and
 [the architecture](docs/architecture.md).

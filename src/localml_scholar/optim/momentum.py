@@ -52,6 +52,7 @@ class Momentum(Optimizer):
         expected = {f"velocity::{index}" for index in range(len(self.parameters))}
         if set(arrays) != expected:
             raise ValueError("Momentum checkpoint state keys do not match parameters.")
+        validated: list[np.ndarray] = []
         for index, parameter in enumerate(self.parameters):
             values = arrays[f"velocity::{index}"]
             if (
@@ -62,4 +63,6 @@ class Momentum(Optimizer):
                 raise ValueError(
                     f"Momentum velocity {index} has invalid shape, dtype, or values."
                 )
+            validated.append(values)
+        for parameter, values in zip(self.parameters, validated, strict=True):
             self._velocity[parameter][...] = values

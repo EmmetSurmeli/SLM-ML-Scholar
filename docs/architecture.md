@@ -43,7 +43,7 @@ decorative feature.
 
 ## Implemented package boundaries
 
-Milestones 1 through 5 Part 1 establish interfaces that later components can
+Milestones 1 through 5 Part 2 establish interfaces that later components can
 extend:
 
 - `tokenizer.py` owns text/token conversion and vocabulary persistence.
@@ -55,10 +55,14 @@ extend:
   masked softmax, one single-head causal-attention module, residual primitives,
   a position-wise feed-forward module, and one pre-norm decoder block.
 - `optim/` owns optimizers over identity-keyed parameters.
-- `training/` owns global gradient clipping and generalized finite differences.
+- `training/` owns configuration, explicit update cycles, deterministic
+  evaluation, resumable training state, global clipping, and finite
+  differences.
 - `models/` composes primitives into checkpointable models.
 - `optimizers.py` remains the Milestone 1 named-array SGD compatibility path.
-- `generation.py` owns autoregressive sampling independently of training.
+- `generation.py` owns bigram and transformer autoregressive sampling
+  independently of training.
+- `serialization.py` owns atomic NPZ replacement without model dependencies.
 - `utils.py` owns reproducibility, reporting math, and the bigram-specific
   compatibility gradient check.
 - `experiments/` composes library pieces into reproducible runs but is not
@@ -84,6 +88,12 @@ order.
 Evaluation forwards do not cache and may be repeated, but cannot be followed
 by backward. `clear_cache` exists only for explicit recovery after an abandoned
 computation.
+
+`inference_mode()` makes the existing behavior safe for an entire module tree.
+It refuses to enter if a training cache is pending, snapshots every nested
+mode, disables cache creation, checks for unexpected caches on exit, and
+restores the snapshots. Generation and evaluation use this context. They do
+not weaken the one-forward/one-backward training contract.
 
 See `docs/numerical_precision.md` for the project-wide float32/float64 policy.
 
@@ -197,9 +207,45 @@ every decoder block, and the vocabulary head. The complete configuration and
 deterministic named state are checkpointed. The public state loader validates
 every key, shape, dtype, and finite value before changing any parameter.
 
-This is an architecture-only milestone. No transformer training loop,
-sampling, generation, evaluation utility, or trained transformer checkpoint
-exists yet.
+## Training, evaluation, generation, and checkpoint architecture
+
+Milestone 5 Part 2 trains the existing architecture without introducing
+another neural-network implementation:
+
+```text
+isolated train token stream
+        ↓ private restorable RNG
+shifted integer batches (B, T)
+        ↓
+TransformerLanguageModel.forward
+        ↓ logits (B, T, V)
+N-D softmax cross-entropy
+        ↓ explicit logit gradient
+TransformerLanguageModel.backward
+        ↓
+optional coupled L2 decay → global norm/clip → optimizer step
+```
+
+`SequenceBatchSampler` samples valid starts uniformly with replacement. A
+start is valid only when its last shifted target remains in the supplied token
+stream. Training and validation samplers never share a stream or RNG.
+
+Evaluation constructs new fixed-seed samplers on every call and combines batch
+losses by predicted-token count. It therefore does not change the next
+training batch. Parameter values, optimizer state, and gradient buffers remain
+unchanged.
+
+Generation accepts a batched integer prompt, crops only the model input to the
+most recent configured context, and recomputes the retained context at every
+new token. Greedy decoding, positive temperature, and stable top-\(k\)
+sampling are supported. There is no KV cache.
+
+Model-only checkpoints preserve architecture and parameters for inference.
+Full training checkpoints additionally preserve optimizer tensors and step,
+training configuration, sampler RNG state, tokenizer vocabulary, corpus
+identity hashes, best-validation state, history, mode, clipping/decay policy,
+and seed. Full checkpoint replacement is atomic, and loading reconstructs
+fresh objects before returning a usable trainer.
 
 ## Current models
 
@@ -230,10 +276,12 @@ independence, runs every manual backward path, and applies one optimizer step.
 One block without position information or a vocabulary output is still not a
 transformer language model.
 
-Milestone 5 Part 1 assembles a complete decoder-only transformer architecture
-that produces vocabulary logits and supports manual backward through every
-parameter. It has not been trained, evaluated, or given a transformer
-generation interface, so it makes no language capability claim.
+Milestone 5 Part 1 assembles the complete decoder-only transformer
+architecture. Part 2 adds a deterministic training and generation path and
+proves exact interrupted resumption on a tiny fixture. The model is now a
+trained character-level transformer in the literal engineering sense, but its
+small fixture results do not establish general language ability or paper
+understanding.
 
 ## Future module constraints
 
