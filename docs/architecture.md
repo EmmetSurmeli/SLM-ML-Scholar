@@ -43,7 +43,7 @@ decorative feature.
 
 ## Implemented package boundaries
 
-Milestones 1 through 5 Part 2 establish interfaces that later components can
+Milestones 1 through 6 establish interfaces that later components can
 extend:
 
 - `tokenizer.py` owns text/token conversion and vocabulary persistence.
@@ -52,8 +52,9 @@ extend:
 - `losses.py` owns explicit numerical forward/backward primitives.
 - `nn/` owns explicit `Parameter`/`Module` foundations, initializers, layers,
   activations, normalization, sequential composition, causal masks, stable
-  masked softmax, one single-head causal-attention module, residual primitives,
-  a position-wise feed-forward module, and one pre-norm decoder block.
+  masked softmax, legacy single-head and canonical fused multi-head causal
+  attention, residual primitives, a position-wise feed-forward module, and one
+  pre-norm decoder block.
 - `optim/` owns optimizers over identity-keyed parameters.
 - `training/` owns configuration, explicit update cycles, deterministic
   evaluation, resumable training state, global clipping, and finite
@@ -99,31 +100,42 @@ See `docs/numerical_precision.md` for the project-wide float32/float64 policy.
 
 ## Current attention architecture
 
-`CausalSelfAttentionHead` composes three independent `Linear` children for
-query, key, and value projections. An optional fourth `Linear` projects the
-value aggregate back to the input dimension. The default path is intentionally
-the smallest one:
+`CausalSelfAttentionHead` remains as the validated legacy reference.
+`MultiHeadCausalSelfAttention` is the canonical implementation used by decoder
+blocks. It uses fused `Linear` projections with widths `H * key_dim`,
+`H * key_dim`, and `H * value_dim`:
 
 ```text
-X ─┬─ Linear ─ Q ─┐
-   ├─ Linear ─ K ─┴─ scaled QKᵀ ─ causal masked softmax ─ A ─┐
-   └─ Linear ─ V ────────────────────────────────────────────┴─ A V ─ O
+X → fused Q/K/V projections
+  → split (B,T,H*d) to (B,H,T,d)
+  → per-head scaled QKᵀ
+  → shared causal mask + independent per-head softmax
+  → per-head A V
+  → concatenate (B,T,H*d_v)
+  → output Linear
+  → Y (B,T,D)
 ```
 
-The broadcastable mask has shape `(1, T, T)` and uses `True` for allowed
-positions. Softmax computes its maximum and denominator from allowed entries
-only. Blocked probabilities and their score gradients are exactly zero.
+The multi-head mask has shape `(1, 1, T, T)` and uses `True` for allowed
+positions. It broadcasts across batches and heads. Softmax computes its
+maximum and denominator independently for every batch/head/query row from
+allowed entries only. Blocked probabilities and score gradients are exactly
+zero.
 
-Backward propagation is manual at every stage: aggregation produces gradients
-for attention probabilities and values; masked-softmax backward produces score
-gradients; scaled score backward produces query and key gradients; and the
-three projection input gradients are explicitly summed. The optional output
-projection is differentiated first when enabled.
+Backward propagation first differentiates the output projection and inverts
+the concatenation layout. Every head then produces probability, value, score,
+query, and key gradients. Those per-head gradients are reassembled into the
+fused layouts, passed through the three affine projections, and their shared
+input branches are explicitly summed.
 
-The standalone attention implementation materializes the complete score and
-probability matrices. It does not itself include dropout, a padding mask,
-multiple heads, a residual path, a decoder block, a KV cache, or an optimized
-kernel.
+Per-head dimensions are explicit, so the model dimension need not be divisible
+by the head count. Increasing `H` while holding per-head dimensions fixed
+increases projection width and parameter count. With `H=1`, names, shapes,
+initialization, output, and backward results match the legacy implementation
+exactly.
+
+Attention materializes complete `(B,H,T,T)` score and probability tensors. It
+does not include dropout, a padding mask, KV caching, or an optimized kernel.
 
 ## Current decoder-block architecture
 
@@ -131,7 +143,7 @@ kernel.
 
 ```text
 X
-├── LayerNorm 1 → single-head causal attention ─┐
+├── LayerNorm 1 → multi-head causal attention ──┐
 └────────────────────────────────────────────── + → R1
                                                 │
                                                 ├── LayerNorm 2
@@ -141,10 +153,9 @@ X
                                                 └───────────── + → Y
 ```
 
-The attention output projection is enabled by default so arbitrary valid
-value dimensions map back to the model dimension before the first residual.
-When it is disabled, construction requires the value dimension to equal the
-model dimension.
+The attention output projection is mandatory so arbitrary head counts and
+per-head value dimensions map back to the model dimension before the first
+residual.
 
 Residual addition is an explicit checked numerical operation rather than a
 module or automatic graph node. Both operands must have identical shape and
@@ -157,12 +168,13 @@ both accumulation steps visibly:
 2. add the first residual identity gradient to the gradient returned through
    attention and LayerNorm 1.
 
-LayerNorm, the feed-forward network, and residual addition operate
-independently at each position. Single-head causal attention remains the only
-cross-token operation, so the complete block preserves its causal boundary.
+LayerNorm, the feed-forward network, concatenation, output projection, and
+residual addition operate independently at each position. Multi-head causal
+attention is the only cross-token operation, so the complete block preserves
+its causal boundary.
 
-The block has no final normalization, multiple heads, stack, position
-representation, vocabulary projection, or training objective.
+The block has no final normalization, stack, position representation,
+vocabulary projection, or training objective.
 
 ## Current decoder-only language-model architecture
 
@@ -203,9 +215,14 @@ token embedding. The existing N-dimensional cross-entropy consumes these
 logits directly.
 
 One top-level seed spawns independent child seed streams for both embeddings,
-every decoder block, and the vocabulary head. The complete configuration and
-deterministic named state are checkpointed. The public state loader validates
-every key, shape, dtype, and finite value before changing any parameter.
+every decoder block, and the vocabulary head. `number_of_heads` is part of the
+complete checkpointed configuration. The public state loader validates every
+key, shape, dtype, and finite value before changing any parameter.
+
+Version 0.6.0 recognizes 0.5.0 single-head model checkpoints and 0.5.1 full
+training checkpoints. It adds `number_of_heads=1` in memory because the fused
+one-head parameter names, order, and shapes are identical. Unknown versions
+and incompatible state remain errors.
 
 ## Training, evaluation, generation, and checkpoint architecture
 
@@ -249,15 +266,15 @@ fresh objects before returning a usable trainer.
 
 ## Current models
 
-The only language model with an implemented training and generation path still
-predicts the next character from the immediately preceding character:
+The Milestone 1 baseline predicts the next character from the immediately
+preceding character:
 
 \[
 P(x_{t+1}\mid x_t).
 \]
 
 It has no representation of words, equations, passages, papers, or questions.
-Its value is as an end-to-end correctness baseline for tokenization, dataset
+Its value is as a minimal correctness baseline for tokenization, dataset
 isolation, loss math, manual gradients, optimization, generation, persistence,
 and experiment bookkeeping.
 
@@ -282,6 +299,12 @@ proves exact interrupted resumption on a tiny fixture. The model is now a
 trained character-level transformer in the literal engineering sense, but its
 small fixture results do not establish general language ability or paper
 understanding.
+
+Milestone 6 replaces the decoder's canonical attention path with fused
+multi-head causal attention while preserving `H=1` exactly. Training,
+evaluation, autoregressive generation, model checkpoints, and exact full-state
+resumption support multiple heads. The tokenizer and experimental corpora
+remain deliberately small and character-level.
 
 ## Future module constraints
 

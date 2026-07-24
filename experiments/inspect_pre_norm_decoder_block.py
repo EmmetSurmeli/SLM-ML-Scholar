@@ -146,7 +146,7 @@ def inspect_decoder_block(
         raise AssertionError("Adam did not update any decoder-block parameter.")
 
     summary: dict[str, Any] = {
-        "purpose": "pre-norm single-head decoder-block correctness inspection",
+        "purpose": "pre-norm decoder-block correctness inspection",
         "seed": seed,
         "token_ids": token_ids.tolist(),
         "modified_token_ids": modified_token_ids.tolist(),

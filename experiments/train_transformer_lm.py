@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Train and generate with the manual single-head transformer language model."""
+"""Train and generate with the manual multi-head transformer language model."""
 
 from __future__ import annotations
 
@@ -74,6 +74,7 @@ def run_training(args: argparse.Namespace) -> dict[str, Any]:
         maximum_context_length=args.context_length,
         model_dimension=args.model_dimension,
         number_of_layers=args.layers,
+        number_of_heads=args.heads,
         key_dimension=args.key_dimension,
         value_dimension=args.value_dimension,
         feed_forward_dimension=args.feed_forward_dimension,
@@ -158,7 +159,7 @@ def run_training(args: argparse.Namespace) -> dict[str, Any]:
         args.seed + int(reloaded_best.best_validation_step or 0),
     )
     summary: dict[str, Any] = {
-        "milestone": "5 Part 2",
+        "milestone": 6,
         "package_version": __version__,
         "corpus_source": corpus_source,
         "corpus_characters": len(text),
@@ -211,7 +212,7 @@ def run_training(args: argparse.Namespace) -> dict[str, Any]:
 
 def parse_args(arguments: Sequence[str] | None = None) -> argparse.Namespace:
     parser = argparse.ArgumentParser(
-        description="Train the from-scratch NumPy single-head transformer."
+        description="Train the from-scratch NumPy multi-head transformer."
     )
     parser.add_argument("--input", type=Path, default=None)
     parser.add_argument(
@@ -224,6 +225,7 @@ def parse_args(arguments: Sequence[str] | None = None) -> argparse.Namespace:
     parser.add_argument("--batch-size", type=int, default=4)
     parser.add_argument("--model-dimension", type=int, default=8)
     parser.add_argument("--layers", type=int, default=1)
+    parser.add_argument("--heads", type=int, default=1)
     parser.add_argument("--key-dimension", type=int, default=4)
     parser.add_argument("--value-dimension", type=int, default=4)
     parser.add_argument("--feed-forward-dimension", type=int, default=16)

@@ -1,4 +1,4 @@
-"""A manually differentiated single-head decoder-only language model."""
+"""A manually differentiated multi-head decoder-only language model."""
 
 from __future__ import annotations
 
@@ -24,8 +24,10 @@ from localml_scholar.nn.transformer import (
 )
 from localml_scholar.serialization import atomic_savez
 
-_CHECKPOINT_VERSION = 1
-_MODEL_VERSION = "0.5.0"
+_CHECKPOINT_VERSION = 2
+_MODEL_VERSION = "0.6.0"
+_LEGACY_CHECKPOINT_VERSION = 1
+_LEGACY_MODEL_VERSION = "0.5.0"
 
 
 def _positive_integer(value: int, name: str) -> int:
@@ -62,6 +64,7 @@ class TransformerConfig:
     vocabulary_bias: bool = True
     dtype: np.dtype | type[np.floating] | str = np.float64
     seed: int = 0
+    number_of_heads: int = 1
 
     def __post_init__(self) -> None:
         for name in (
@@ -72,6 +75,7 @@ class TransformerConfig:
             "key_dimension",
             "value_dimension",
             "feed_forward_dimension",
+            "number_of_heads",
         ):
             object.__setattr__(
                 self,
@@ -109,6 +113,7 @@ class TransformerConfig:
             "key_dimension": self.key_dimension,
             "value_dimension": self.value_dimension,
             "feed_forward_dimension": self.feed_forward_dimension,
+            "number_of_heads": self.number_of_heads,
             "layer_norm_epsilon": self.layer_norm_epsilon,
             "attention_bias": self.attention_bias,
             "feed_forward_bias": self.feed_forward_bias,
@@ -118,10 +123,17 @@ class TransformerConfig:
         }
 
     @classmethod
-    def from_dict(cls, values: Mapping[str, Any]) -> TransformerConfig:
+    def from_dict(
+        cls,
+        values: Mapping[str, Any],
+        *,
+        allow_legacy_single_head: bool = False,
+    ) -> TransformerConfig:
         """Construct a configuration from an exact serialized mapping."""
         if not isinstance(values, Mapping):
             raise TypeError("Transformer configuration must be a mapping.")
+        if not isinstance(allow_legacy_single_head, bool):
+            raise TypeError("allow_legacy_single_head must be a boolean.")
         expected_keys = {
             "vocabulary_size",
             "maximum_context_length",
@@ -130,6 +142,7 @@ class TransformerConfig:
             "key_dimension",
             "value_dimension",
             "feed_forward_dimension",
+            "number_of_heads",
             "layer_norm_epsilon",
             "attention_bias",
             "feed_forward_bias",
@@ -137,7 +150,11 @@ class TransformerConfig:
             "dtype",
             "seed",
         }
-        actual_keys = set(values)
+        normalized = dict(values)
+        legacy_keys = expected_keys - {"number_of_heads"}
+        if allow_legacy_single_head and set(normalized) == legacy_keys:
+            normalized["number_of_heads"] = 1
+        actual_keys = set(normalized)
         if actual_keys != expected_keys:
             missing = sorted(str(key) for key in expected_keys - actual_keys)
             unexpected = sorted(str(key) for key in actual_keys - expected_keys)
@@ -145,7 +162,7 @@ class TransformerConfig:
                 "Transformer configuration keys do not match; "
                 f"missing={missing}, unexpected={unexpected}."
             )
-        return cls(**dict(values))
+        return cls(**normalized)
 
 
 @dataclass(frozen=True)
@@ -159,7 +176,7 @@ class TransformerLanguageModel(Module):
     """One decoder-only language model assembled from validated manual layers.
 
     The architecture uses learned token and position embeddings, a positive
-    stack of independent single-head pre-norm decoder blocks, a final
+    stack of independent multi-head pre-norm decoder blocks, a final
     LayerNorm, and an untied vocabulary projection. Token IDs are discrete, so
     ``backward`` accumulates parameter gradients and returns ``None``.
     """
@@ -193,6 +210,7 @@ class TransformerLanguageModel(Module):
         blocks = tuple(
             PreNormDecoderBlock(
                 model_dim=config.model_dimension,
+                number_of_heads=config.number_of_heads,
                 key_dim=config.key_dimension,
                 value_dim=config.value_dimension,
                 ff_hidden_dim=config.feed_forward_dimension,
@@ -426,16 +444,24 @@ class TransformerLanguageModel(Module):
                     ) from error
                 if not isinstance(metadata, dict):
                     raise ValueError("Checkpoint metadata must be an object.")
-                if metadata.get("checkpoint_version") != _CHECKPOINT_VERSION:
+                checkpoint_version = metadata.get("checkpoint_version")
+                model_version = metadata.get("model_version")
+                is_current = (
+                    checkpoint_version == _CHECKPOINT_VERSION
+                    and model_version == _MODEL_VERSION
+                )
+                is_legacy = (
+                    checkpoint_version == _LEGACY_CHECKPOINT_VERSION
+                    and model_version == _LEGACY_MODEL_VERSION
+                )
+                if not is_current and not is_legacy:
                     raise ValueError(
-                        "Unsupported checkpoint version: "
-                        f"{metadata.get('checkpoint_version')!r}."
-                    )
-                if metadata.get("model_version") != _MODEL_VERSION:
-                    raise ValueError(
-                        f"Checkpoint model version "
-                        f"{metadata.get('model_version')!r} "
-                        f"does not match {_MODEL_VERSION!r}."
+                        "Unsupported transformer checkpoint schema/model version: "
+                        f"checkpoint_version={checkpoint_version!r}, "
+                        f"model_version={model_version!r}. Expected current "
+                        f"({_CHECKPOINT_VERSION}, {_MODEL_VERSION!r}) or legacy "
+                        f"single-head ({_LEGACY_CHECKPOINT_VERSION}, "
+                        f"{_LEGACY_MODEL_VERSION!r})."
                     )
                 if metadata.get("model_type") != cls.__name__:
                     raise ValueError(
@@ -466,6 +492,11 @@ class TransformerLanguageModel(Module):
         except FileNotFoundError:
             raise FileNotFoundError(f"Checkpoint does not exist: {source}") from None
 
-        model = cls(TransformerConfig.from_dict(configuration))
+        model = cls(
+            TransformerConfig.from_dict(
+                configuration,
+                allow_legacy_single_head=is_legacy,
+            )
+        )
         model.load_state_dict(state)
         return model

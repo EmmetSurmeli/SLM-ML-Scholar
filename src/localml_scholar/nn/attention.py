@@ -1,4 +1,4 @@
-"""Stable masked softmax primitives and single-head causal self-attention."""
+"""Stable masked softmax and manually differentiated causal attention."""
 
 from __future__ import annotations
 
@@ -15,6 +15,7 @@ from localml_scholar.nn.initialization import validate_float_dtype
 from localml_scholar.nn.linear import Linear
 from localml_scholar.nn.masks import causal_attention_mask
 from localml_scholar.nn.module import FloatArray, Module
+from localml_scholar.serialization import atomic_savez
 
 
 def _validate_attention_values(values: ArrayLike, name: str) -> NDArray[np.floating]:
@@ -433,8 +434,7 @@ class CausalSelfAttentionHead(Module):
         }
         for name, parameter in self.named_parameters():
             arrays[f"parameter::{name}"] = parameter.data
-        np.savez(destination, **arrays)
-        return destination
+        return atomic_savez(destination, arrays)
 
     @classmethod
     def load_checkpoint(cls, path: str | Path) -> CausalSelfAttentionHead:
@@ -479,4 +479,410 @@ class CausalSelfAttentionHead(Module):
                     parameter.load_data(checkpoint[f"parameter::{name}"])
         except FileNotFoundError:
             raise FileNotFoundError(f"Checkpoint does not exist: {source}") from None
+        return model
+
+
+@dataclass(frozen=True)
+class MultiHeadAttentionDetails:
+    """Read-only tensors from one fused multi-head attention forward."""
+
+    query_flat: FloatArray
+    key_flat: FloatArray
+    value_flat: FloatArray
+    query: FloatArray
+    key: FloatArray
+    value: FloatArray
+    scaled_scores: FloatArray
+    allowed_mask: NDArray[np.bool_]
+    probabilities: FloatArray
+    head_outputs: FloatArray
+    concatenated: FloatArray
+    output: FloatArray
+
+
+@dataclass(frozen=True)
+class _MultiHeadAttentionCache:
+    query: FloatArray
+    key: FloatArray
+    value: FloatArray
+    probabilities: FloatArray
+    allowed_mask: NDArray[np.bool_]
+    batch_size: int
+    sequence_length: int
+    output_shape: tuple[int, ...]
+
+
+class MultiHeadCausalSelfAttention(Module):
+    """Fused-projection multi-head causal self-attention.
+
+    Flat projections have shapes ``(B, T, H*d_k)`` or ``(B, T, H*d_v)``.
+    They reshape to ``(B, T, H, d)`` and transpose to
+    ``(B, H, T, d)``. Head outputs reverse that exact layout transformation
+    before the mandatory output projection.
+    """
+
+    CHECKPOINT_VERSION = 1
+
+    def __init__(
+        self,
+        input_dim: int,
+        number_of_heads: int,
+        key_dim: int,
+        *,
+        value_dim: int | None = None,
+        bias: bool = True,
+        output_bias: bool | None = None,
+        seed: int = 0,
+        dtype: np.dtype | type[np.floating] = np.float64,
+    ) -> None:
+        super().__init__()
+        self.input_dim = Linear._validate_dimension(input_dim, "input_dim")
+        self.number_of_heads = Linear._validate_dimension(
+            number_of_heads,
+            "number_of_heads",
+        )
+        self.key_dim = Linear._validate_dimension(key_dim, "key_dim")
+        resolved_value_dim = key_dim if value_dim is None else value_dim
+        self.value_dim = Linear._validate_dimension(resolved_value_dim, "value_dim")
+        if not isinstance(bias, bool):
+            raise TypeError("bias must be a boolean.")
+        if output_bias is not None and not isinstance(output_bias, bool):
+            raise TypeError("output_bias must be None or a boolean.")
+        if isinstance(seed, bool) or not isinstance(seed, int):
+            raise TypeError("seed must be an integer.")
+        if seed < 0:
+            raise ValueError("seed must be non-negative.")
+        self.use_bias = bias
+        self.use_output_bias = bias if output_bias is None else output_bias
+        self.seed = seed
+        self.dtype = validate_float_dtype(dtype)
+        self.query_width = self.number_of_heads * self.key_dim
+        self.value_width = self.number_of_heads * self.value_dim
+        self.scale = np.asarray(1.0 / math.sqrt(self.key_dim), dtype=self.dtype)
+
+        rng = np.random.default_rng(seed)
+        self.query_projection = Linear(
+            self.input_dim,
+            self.query_width,
+            bias=bias,
+            rng=rng,
+            dtype=self.dtype,
+        )
+        self.key_projection = Linear(
+            self.input_dim,
+            self.query_width,
+            bias=bias,
+            rng=rng,
+            dtype=self.dtype,
+        )
+        self.value_projection = Linear(
+            self.input_dim,
+            self.value_width,
+            bias=bias,
+            rng=rng,
+            dtype=self.dtype,
+        )
+        self.output_projection = Linear(
+            self.value_width,
+            self.input_dim,
+            bias=self.use_output_bias,
+            rng=rng,
+            dtype=self.dtype,
+        )
+        self.register_module("query_projection", self.query_projection)
+        self.register_module("key_projection", self.key_projection)
+        self.register_module("value_projection", self.value_projection)
+        self.register_module("output_projection", self.output_projection)
+        self._last_score_gradient: FloatArray | None = None
+
+    @property
+    def parameter_count(self) -> int:
+        """Return the total number of scalar trainable parameters."""
+        return sum(parameter.size for parameter in self.parameters())
+
+    @property
+    def configuration(self) -> dict[str, Any]:
+        """Return the complete reconstruction configuration."""
+        return {
+            "input_dim": self.input_dim,
+            "number_of_heads": self.number_of_heads,
+            "key_dim": self.key_dim,
+            "value_dim": self.value_dim,
+            "bias": self.use_bias,
+            "output_bias": self.use_output_bias,
+            "seed": self.seed,
+            "dtype": self.dtype.name,
+        }
+
+    @property
+    def last_score_gradient(self) -> FloatArray | None:
+        """Return a read-only copy of the latest per-head score gradient."""
+        if self._last_score_gradient is None:
+            return None
+        return _readonly_copy(self._last_score_gradient)
+
+    def _split_heads(
+        self,
+        values: FloatArray,
+        *,
+        head_dimension: int,
+    ) -> FloatArray:
+        batch_size, sequence_length, _ = values.shape
+        return values.reshape(
+            batch_size,
+            sequence_length,
+            self.number_of_heads,
+            head_dimension,
+        ).transpose(0, 2, 1, 3)
+
+    def _join_heads(self, values: FloatArray) -> FloatArray:
+        batch_size, _, sequence_length, _ = values.shape
+        return values.transpose(0, 2, 1, 3).reshape(
+            batch_size,
+            sequence_length,
+            self.value_width,
+        )
+
+    @overload
+    def forward(
+        self,
+        inputs: ArrayLike,
+        *,
+        return_attention: Literal[False] = False,
+    ) -> FloatArray: ...
+
+    @overload
+    def forward(
+        self,
+        inputs: ArrayLike,
+        *,
+        return_attention: Literal[True],
+    ) -> tuple[FloatArray, MultiHeadAttentionDetails]: ...
+
+    def forward(
+        self,
+        inputs: ArrayLike,
+        *,
+        return_attention: bool = False,
+    ) -> FloatArray | tuple[FloatArray, MultiHeadAttentionDetails]:
+        """Compute fused multi-head causal attention for ``(B, T, D)`` inputs."""
+        if not isinstance(return_attention, bool):
+            raise TypeError("return_attention must be a boolean.")
+        values = self._validate_float_array(
+            inputs,
+            "inputs",
+            dtype=self.dtype,
+            minimum_dimensions=3,
+        )
+        if values.ndim != 3:
+            raise ValueError(
+                "inputs must have exactly three dimensions (B, T, D), "
+                f"got shape {values.shape}."
+            )
+        if values.shape[-1] != self.input_dim:
+            raise ValueError(
+                f"inputs final dimension must be {self.input_dim}, "
+                f"got shape {values.shape}."
+            )
+        if values.shape[0] == 0 or values.shape[1] == 0:
+            raise ValueError("inputs batch and sequence dimensions must be positive.")
+        if self.training and self.has_pending_cache():
+            raise RuntimeError(
+                "MultiHeadCausalSelfAttention.forward cannot run twice in "
+                "training mode before backward consumes the first cache."
+            )
+
+        batch_size, sequence_length, _ = values.shape
+        try:
+            query_flat = self.query_projection.forward(values)
+            key_flat = self.key_projection.forward(values)
+            value_flat = self.value_projection.forward(values)
+            query = self._split_heads(query_flat, head_dimension=self.key_dim)
+            key = self._split_heads(key_flat, head_dimension=self.key_dim)
+            value = self._split_heads(value_flat, head_dimension=self.value_dim)
+            scaled_scores = (query @ np.swapaxes(key, -1, -2)) * self.scale
+            if not np.all(np.isfinite(scaled_scores)):
+                raise FloatingPointError(
+                    "Multi-head attention scores produced non-finite values."
+                )
+            allowed_mask = causal_attention_mask(sequence_length)[:, None, :, :]
+            probabilities = masked_softmax(scaled_scores, allowed_mask)
+            head_outputs = probabilities @ value
+            concatenated = self._join_heads(head_outputs)
+            output = self.output_projection.forward(concatenated)
+            expected_shape = (batch_size, sequence_length, self.input_dim)
+            if output.shape != expected_shape:
+                raise RuntimeError(
+                    f"Multi-head attention output must have shape "
+                    f"{expected_shape}, got {output.shape}."
+                )
+            if not np.all(np.isfinite(output)):
+                raise FloatingPointError(
+                    "Multi-head attention produced non-finite output values."
+                )
+            self._store_forward_cache(
+                _MultiHeadAttentionCache(
+                    query=query,
+                    key=key,
+                    value=value,
+                    probabilities=probabilities,
+                    allowed_mask=allowed_mask,
+                    batch_size=batch_size,
+                    sequence_length=sequence_length,
+                    output_shape=output.shape,
+                )
+            )
+            self._last_score_gradient = None
+        except Exception:
+            self.clear_cache()
+            raise
+
+        if not return_attention:
+            return output
+        return output, MultiHeadAttentionDetails(
+            query_flat=_readonly_copy(query_flat),
+            key_flat=_readonly_copy(key_flat),
+            value_flat=_readonly_copy(value_flat),
+            query=_readonly_copy(query),
+            key=_readonly_copy(key),
+            value=_readonly_copy(value),
+            scaled_scores=_readonly_copy(scaled_scores),
+            allowed_mask=_readonly_copy(allowed_mask),
+            probabilities=_readonly_copy(probabilities),
+            head_outputs=_readonly_copy(head_outputs),
+            concatenated=_readonly_copy(concatenated),
+            output=_readonly_copy(output),
+        )
+
+    def backward(self, grad_output: ArrayLike) -> FloatArray:
+        """Backpropagate output projection, heads, softmax, and fused projections."""
+        cache = self._require_forward_cache()
+        gradient = self._validate_float_array(
+            grad_output,
+            "grad_output",
+            dtype=self.dtype,
+            minimum_dimensions=3,
+        )
+        if gradient.shape != cache.output_shape:
+            raise ValueError(
+                f"grad_output shape must be {cache.output_shape}, got {gradient.shape}."
+            )
+
+        grad_concatenated = self.output_projection.backward(gradient)
+        grad_head_outputs = grad_concatenated.reshape(
+            cache.batch_size,
+            cache.sequence_length,
+            self.number_of_heads,
+            self.value_dim,
+        ).transpose(0, 2, 1, 3)
+        grad_probabilities = grad_head_outputs @ np.swapaxes(cache.value, -1, -2)
+        grad_value = np.swapaxes(cache.probabilities, -1, -2) @ grad_head_outputs
+        grad_scores = masked_softmax_backward(
+            cache.probabilities,
+            grad_probabilities,
+            cache.allowed_mask,
+        )
+        grad_query = (grad_scores @ cache.key) * self.scale
+        grad_key = (np.swapaxes(grad_scores, -1, -2) @ cache.query) * self.scale
+
+        grad_query_flat = grad_query.transpose(0, 2, 1, 3).reshape(
+            cache.batch_size,
+            cache.sequence_length,
+            self.query_width,
+        )
+        grad_key_flat = grad_key.transpose(0, 2, 1, 3).reshape(
+            cache.batch_size,
+            cache.sequence_length,
+            self.query_width,
+        )
+        grad_value_flat = grad_value.transpose(0, 2, 1, 3).reshape(
+            cache.batch_size,
+            cache.sequence_length,
+            self.value_width,
+        )
+        if not (
+            np.all(np.isfinite(grad_query_flat))
+            and np.all(np.isfinite(grad_key_flat))
+            and np.all(np.isfinite(grad_value_flat))
+        ):
+            raise FloatingPointError(
+                "Multi-head attention produced non-finite projection gradients."
+            )
+        grad_input_query = self.query_projection.backward(grad_query_flat)
+        grad_input_key = self.key_projection.backward(grad_key_flat)
+        grad_input_value = self.value_projection.backward(grad_value_flat)
+        grad_input = grad_input_query + grad_input_key + grad_input_value
+        if not np.all(np.isfinite(grad_input)):
+            raise FloatingPointError(
+                "Multi-head attention produced a non-finite input gradient."
+            )
+        self._last_score_gradient = np.array(grad_scores, copy=True)
+        self._consume_forward_cache()
+        return grad_input
+
+    def save_checkpoint(self, path: str | Path) -> Path:
+        """Atomically persist configuration and every fused attention parameter."""
+        destination = Path(path)
+        if destination.suffix != ".npz":
+            raise ValueError("Checkpoint path must end with '.npz'.")
+        arrays: dict[str, np.ndarray] = {
+            "checkpoint_version": np.asarray(
+                self.CHECKPOINT_VERSION,
+                dtype=np.int64,
+            ),
+            "model_config_json": np.asarray(
+                json.dumps(self.configuration, sort_keys=True)
+            ),
+        }
+        for name, parameter in self.named_parameters():
+            arrays[f"parameter::{name}"] = parameter.data
+        return atomic_savez(destination, arrays)
+
+    @classmethod
+    def load_checkpoint(cls, path: str | Path) -> MultiHeadCausalSelfAttention:
+        """Reconstruct fused attention and validate a complete checkpoint."""
+        source = Path(path)
+        try:
+            with np.load(source, allow_pickle=False) as checkpoint:
+                if "checkpoint_version" not in checkpoint.files:
+                    raise ValueError("Checkpoint is missing checkpoint_version.")
+                version = int(checkpoint["checkpoint_version"])
+                if version != cls.CHECKPOINT_VERSION:
+                    raise ValueError(
+                        f"Unsupported multi-head checkpoint version: {version}."
+                    )
+                if "model_config_json" not in checkpoint.files:
+                    raise ValueError("Checkpoint is missing model_config_json.")
+                try:
+                    configuration = json.loads(str(checkpoint["model_config_json"]))
+                except json.JSONDecodeError as error:
+                    raise ValueError(
+                        "Checkpoint model configuration is not valid JSON."
+                    ) from error
+                if not isinstance(configuration, dict):
+                    raise ValueError(
+                        "Checkpoint model configuration must be an object."
+                    )
+                model = cls(**configuration)
+                expected_keys = {
+                    "checkpoint_version",
+                    "model_config_json",
+                    *(f"parameter::{name}" for name, _ in model.named_parameters()),
+                }
+                actual_keys = set(checkpoint.files)
+                if actual_keys != expected_keys:
+                    missing = sorted(expected_keys - actual_keys)
+                    unexpected = sorted(actual_keys - expected_keys)
+                    raise ValueError(
+                        "Checkpoint parameter keys do not match multi-head "
+                        f"attention; missing={missing}, unexpected={unexpected}."
+                    )
+                state = {
+                    name: np.array(checkpoint[f"parameter::{name}"], copy=True)
+                    for name, _ in model.named_parameters()
+                }
+        except FileNotFoundError:
+            raise FileNotFoundError(f"Checkpoint does not exist: {source}") from None
+        for name, parameter in model.named_parameters():
+            parameter.load_data(state[name])
         return model

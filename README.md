@@ -21,9 +21,9 @@ framework or automatic-differentiation system. This is an educational and
 engineering constraint, not a claim that a from-scratch model is automatically
 faster or more capable.
 
-## Current status: Milestone 5 Part 2
+## Current status: Milestone 6
 
-The package version is `0.5.1`.
+The package version is `0.6.0`.
 
 Milestone 1 is complete and independently audited. Its character-level bigram
 learns a \(V\times V\) table of next-character logits and conditions only on
@@ -133,9 +133,27 @@ Milestone 5 Part 2 trains that exact architecture and adds:
 - a configurable CPU-friendly local character-corpus training CLI
 
 The resulting fixture is the project's first trained decoder-only transformer
-language model. It remains character-level, single-head, tiny, educational,
-CPU-oriented, and unoptimized. Every neural-network gradient is still manually
-implemented; there is no PyTorch, autograd, or external training framework.
+language model.
+
+Milestone 6 extends that architecture with fused multi-head causal
+self-attention:
+
+- fused query, key, and value projections with explicit per-head dimensions
+- explicit split, transpose, concatenation, and inverse-gradient layouts
+- a shared causal mask with independently normalized per-head probabilities
+- a mandatory output projection back to the residual model dimension
+- complete manual backward propagation through every head and projection
+- exact one-head equivalence to the original attention implementation
+- exhaustive float64 finite differences and operational causality tests
+- decoder, model, optimizer, clipping, training, evaluation, generation, and
+  exact-resumption integration
+- explicit migration for recognized 0.5.0 model-only and 0.5.1 full training
+  checkpoints
+- deterministic inspection and controlled one-head/two-head experiments
+
+The model remains character-level, tiny, educational, CPU-oriented, and
+unoptimized. Every neural-network gradient is manually implemented; there is
+no PyTorch, autograd, or external training framework.
 
 The project is **still not a useful SLM and not yet a research-paper
 assistant**. The
@@ -182,7 +200,11 @@ exhaustive transformer parameter gradients, dtype policy, cache misuse, and
 malformed inputs. Milestone 5 Part 2 adds sequence-shift and sampler-state
 tests, no-cache inference checks, generation filtering and determinism,
 training/evaluation invariants, atomic full-state validation, exact interrupted
-resumption, and a bounded tiny-overfit integration test.
+resumption, and a bounded tiny-overfit integration test. Milestone 6 adds
+hand-computed and independent-reference multi-head tests, exact legacy
+one-head equivalence, exhaustive one- and two-head gradients, multi-head
+decoder gradients, checkpoint migration, and bitwise-exact two-head training
+resumption.
 
 ### Verified implementation
 
@@ -198,29 +220,38 @@ python3 experiments/train_bigram.py --config configs/bigram_small.json
 python3 experiments/train_mlp_xor.py
 python3 experiments/inspect_single_head_attention.py
 python3 experiments/inspect_pre_norm_decoder_block.py
+python3 experiments/inspect_multi_head_attention.py
+python3 experiments/compare_single_and_multi_head.py --steps 20
 python3 experiments/overfit_tiny_transformer.py \
-  --steps 120 \
-  --output outputs/tiny_transformer_overfit_smoke
+  --heads 1 --steps 40 \
+  --output outputs/tiny_transformer_overfit_one_head
+python3 experiments/overfit_tiny_transformer.py \
+  --heads 2 --steps 40 \
+  --output outputs/tiny_transformer_overfit_two_heads
 python3 experiments/train_transformer_lm.py \
+  --heads 2 \
   --steps 20 \
   --until-step 10 \
   --evaluation-interval 5 \
   --checkpoint-interval 5 \
   --generation-length 10 \
-  --output outputs/transformer_lm_resume_smoke
+  --output outputs/transformer_lm_multi_head_resume_smoke
 python3 experiments/train_transformer_lm.py \
+  --heads 2 \
   --steps 20 \
   --until-step 20 \
   --evaluation-interval 5 \
   --checkpoint-interval 5 \
   --generation-length 10 \
-  --output outputs/transformer_lm_resume_smoke \
-  --resume outputs/transformer_lm_resume_smoke/latest_training_checkpoint.npz
+  --output outputs/transformer_lm_multi_head_resume_smoke \
+  --resume \
+    outputs/transformer_lm_multi_head_resume_smoke/latest_training_checkpoint.npz
 PYTHONPATH=src python3 -c \
   "import localml_scholar; print(localml_scholar.__version__)"
 ```
 
-Ruff reported no lint or formatting errors, and pytest reported `279 passed`.
+Ruff reported no lint or formatting errors, `git diff --check` was clean, and
+pytest reported `315 passed in 4.27s`.
 The 300-step fallback-corpus smoke run used 2,094 training examples, 232
 validation examples, a 23-character vocabulary, and 529 parameters. Its best
 sampled validation loss was `1.5488034950125846` (perplexity
@@ -251,21 +282,37 @@ The 134-parameter decoder fixture produced synthetic loss
 `5.861637709654549`, preserved earlier outputs after changing a future token,
 and updated at least one parameter.
 
-The 575-parameter tiny transformer overfit experiment used the repeated
-character pattern `abc`, float32, one attention head, and an interruption at
-step 60. After resuming to step 120, sampled validation loss decreased from
-`2.0344989001750946` to `0.00043658849608618766`, perplexity decreased from
-`7.648418543862188` to `1.0004366838147147`, greedy transition agreement was
-`1.0`, and checkpoint-reloaded logits and generation were exact. This result
-shows that the manual components can learn one transparent repetitive fixture;
-it is not a language-quality result.
+The 100-parameter multi-head inspection fixture (including its embedding
+table) used two heads. Every future probability was exactly zero, earlier
+outputs were bitwise unchanged after a future-token modification, and its
+one-head fused/legacy maximum absolute difference was exactly `0.0`. Its
+synthetic loss was `1.8284588093444825`; all reported projection and input
+gradient norms were finite.
 
-The 931-parameter fallback-corpus transformer smoke run trained through step
-10, restored the full checkpoint, and continued to step 20. Its fixed-sample
-validation loss decreased from `3.3290658791859946` before training to
-`2.7723965644836426` (perplexity `15.996925771279688`). The best-checkpoint
-generation matched the final model at that step. This is plumbing and
-resumption evidence on a small bundled corpus, not a competitive benchmark.
+In the 40-step repeated-`abc` regression, the 575-parameter one-head model
+reduced sampled validation loss from `2.0344989001750946` to
+`0.06828678771853447`; the 715-parameter two-head model reduced it from
+`1.5254340171813965` to `0.0011447585420683026`. Both reached greedy
+transition agreement `1.0`, resumed exactly after step 20, and preserved
+logits and generation exactly after checkpoint reload. These runs show only
+that both configurations can learn one transparent fixture.
+
+The controlled repeated-`abcde` comparison held the seed, data, update
+schedule, model dimension, and per-head dimensions constant for 20 steps.
+The 539-parameter one-head run ended at validation loss
+`0.35880257189273834`; the 609-parameter two-head run ended at
+`0.3904109001159668`. Both generated the fixture pattern and reloaded logits
+exactly. This isolated tiny run is not evidence that either head count is
+generally better.
+
+The 1,071-parameter two-head fallback-corpus smoke run trained through step
+10, restored the full checkpoint, and continued to step 20. Validation loss
+decreased from `3.4020278453826904` before the first update to
+`2.7258946895599365` (perplexity `15.270069789089348`). The loader also
+successfully opened the repository's actual 0.5.0 model checkpoint and 0.5.1
+training checkpoint as one-head models; the latter preserved the recorded
+generation prefix. These are plumbing and compatibility results, not
+competitive benchmarks.
 
 ## Training
 
@@ -302,11 +349,12 @@ That script applies only to the Milestone 1 bigram.
 
 ### Transformer training and exact resume
 
-Train the manual single-head transformer on a local UTF-8 corpus:
+Train the manual multi-head-capable transformer on a local UTF-8 corpus:
 
 ```bash
 python3 experiments/train_transformer_lm.py \
   --input data/raw/corpus.txt \
+  --heads 2 \
   --steps 100 \
   --output outputs/transformer_local
 ```
@@ -314,7 +362,8 @@ python3 experiments/train_transformer_lm.py \
 Omit `--input` only for the built-in smoke corpus. Defaults are deliberately
 small and CPU-friendly. Common architecture and training controls include
 `--context-length`, `--batch-size`, `--model-dimension`, `--layers`,
-`--key-dimension`, `--value-dimension`, `--feed-forward-dimension`,
+`--heads`, `--key-dimension`, `--value-dimension`,
+`--feed-forward-dimension`,
 `--learning-rate`, evaluation/checkpoint intervals, prompt, generation length,
 and seed.
 
@@ -364,6 +413,7 @@ config = TransformerConfig(
     maximum_context_length=16,
     model_dimension=8,
     number_of_layers=2,
+    number_of_heads=2,
     key_dimension=4,
     value_dimension=4,
     feed_forward_dimension=16,
@@ -423,6 +473,31 @@ outputs/attention_inspection/run_summary.json
 ```
 
 The output directory is ignored by Git. This experiment does not train a model.
+
+## Multi-head attention inspection and comparison
+
+Inspect fused Q/K/V layouts, per-head scores and probabilities, concatenation,
+causality, manual gradients, and exact one-head equivalence:
+
+```bash
+python3 experiments/inspect_multi_head_attention.py
+```
+
+The script writes
+`outputs/multi_head_attention_inspection/run_summary.json`. It is a
+mathematical inspection, not a quality benchmark.
+
+Run a controlled tiny one-head/two-head integration comparison:
+
+```bash
+python3 experiments/compare_single_and_multi_head.py --steps 20
+```
+
+The corpus, seed, optimizer schedule, model dimension, and per-head dimensions
+are held constant; changing the head count intentionally changes total
+projection width and parameter count. The output reports losses, perplexities,
+gradient norms, generation, elapsed time, and checkpoint reload equality. It
+does not establish that either head count is generally better.
 
 ## Pre-norm decoder-block inspection
 
@@ -513,7 +588,7 @@ src/localml_scholar/
   data.py                 Splits, examples, restorable sequence minibatches
   tokenizer.py            Character tokenizer
   losses.py               N-D stable softmax and indexed cross-entropy
-  nn/                     Layers, attention, FFN, and one decoder block
+  nn/                     Layers, single/multi-head attention, FFN, decoder
   optim/                  SGD, momentum, and Adam
   training/               Transformer trainer, clipping, finite differences
   optimizers.py           Milestone 1 compatibility SGD
@@ -536,6 +611,7 @@ Mathematical details are in:
 - [optimizers and clipping](docs/derivations/optimizers.md)
 - [generalized gradient checking](docs/derivations/gradient_checking.md)
 - [single-head causal attention](docs/derivations/single_head_causal_attention.md)
+- [multi-head causal attention](docs/derivations/multi_head_causal_attention.md)
 - [pre-norm decoder block](docs/derivations/pre_norm_decoder_block.md)
 - [transformer language model](docs/derivations/transformer_language_model.md)
 - [transformer training and generation](docs/derivations/transformer_training_and_generation.md)
@@ -544,6 +620,7 @@ Mathematical details are in:
 - [Milestone 3 decoder-block readiness audit](docs/audits/milestone_3_decoder_block_readiness_audit.md)
 - [Milestone 4 transformer-readiness audit](docs/audits/milestone_4_transformer_readiness_audit.md)
 - [Milestone 5 training-readiness audit](docs/audits/milestone_5_training_readiness_audit.md)
+- [Milestone 5 multi-head-readiness audit](docs/audits/milestone_5_multi_head_readiness_audit.md)
 
 ## Limitations
 
@@ -561,8 +638,8 @@ Mathematical details are in:
 - Exact GELU uses standard-library scalar `erf`; it prioritizes transparent
   mathematics over throughput.
 - LayerNorm is implemented, but RMSNorm is not.
-- The transformer has a decoder stack, learned positions, and vocabulary
-  logits, but every block still uses one attention head.
+- The transformer supports configurable head counts, but increasing heads
+  while holding per-head dimensions fixed also increases width and parameters.
 - There is no dropout, rotary representation, KV cache, FlashAttention,
   mixed-precision path, weight tying, or optimized kernel.
 - Transformer training, evaluation, full-state resume, and generation are
@@ -577,13 +654,13 @@ Mathematical details are in:
 
 ## Roadmap
 
-The next milestone is to implement independently validated multi-head causal
-self-attention, prove that its one-head configuration matches the existing
-path, integrate it into decoder blocks and the trained language model, and
-compare capacity and training behavior without changing tokenizer or retrieval
-scope. Local PDF parsing, retrieval, licensed ML-paper specialization,
-evidence-based evaluation, an application, and measured performance work
-remain later milestones.
+The next milestone is to improve the language-modeling foundation through
+tokenizer and corpus infrastructure, beginning with a byte-level or
+independently implemented BPE tokenizer, padding-aware batching if needed, and
+controlled training experiments before adding paper retrieval. Local PDF
+parsing, retrieval, licensed ML-paper specialization, evidence-based
+evaluation, an application, and measured performance work remain later
+milestones.
 
 See [the full roadmap](docs/roadmap.md) and
 [the architecture](docs/architecture.md).

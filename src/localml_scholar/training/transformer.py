@@ -165,7 +165,9 @@ def evaluate_language_model(
 class TransformerTrainer:
     """Own deterministic sampler, optimizer, metrics, and full training state."""
 
-    CHECKPOINT_VERSION = 1
+    CHECKPOINT_VERSION = 2
+    LEGACY_CHECKPOINT_VERSION = 1
+    LEGACY_PACKAGE_VERSION = "0.5.1"
 
     def __init__(
         self,
@@ -512,16 +514,24 @@ class TransformerTrainer:
             raise ValueError(
                 "Training checkpoint metadata keys do not match the expected format."
             )
-        if metadata.get("checkpoint_version") != cls.CHECKPOINT_VERSION:
+        checkpoint_version = metadata.get("checkpoint_version")
+        package_version = metadata.get("package_version")
+        is_current = (
+            checkpoint_version == cls.CHECKPOINT_VERSION
+            and package_version == __version__
+        )
+        is_legacy = (
+            checkpoint_version == cls.LEGACY_CHECKPOINT_VERSION
+            and package_version == cls.LEGACY_PACKAGE_VERSION
+        )
+        if not is_current and not is_legacy:
             raise ValueError(
-                "Unsupported training checkpoint version: "
-                f"{metadata.get('checkpoint_version')!r}."
-            )
-        if metadata.get("package_version") != __version__:
-            raise ValueError(
-                f"Training checkpoint package version "
-                f"{metadata.get('package_version')!r} does not match "
-                f"{__version__!r}."
+                "Unsupported training checkpoint schema: "
+                f"checkpoint_version={checkpoint_version!r}, "
+                f"package_version={package_version!r}. Expected current "
+                f"({cls.CHECKPOINT_VERSION}, {__version__!r}) or legacy "
+                f"single-head ({cls.LEGACY_CHECKPOINT_VERSION}, "
+                f"{cls.LEGACY_PACKAGE_VERSION!r})."
             )
         if metadata.get("checkpoint_type") != "transformer_training":
             raise ValueError("Checkpoint is not a full transformer training state.")
@@ -533,7 +543,10 @@ class TransformerTrainer:
         ):
             raise ValueError("Training checkpoint weight-decay convention is invalid.")
 
-        model_config = TransformerConfig.from_dict(metadata.get("model_configuration"))
+        model_config = TransformerConfig.from_dict(
+            metadata.get("model_configuration"),
+            allow_legacy_single_head=is_legacy,
+        )
         training_config = TransformerTrainingConfig.from_dict(
             metadata.get("training_configuration")
         )

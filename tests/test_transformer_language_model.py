@@ -60,6 +60,28 @@ def test_transformer_config_round_trip_and_dtype_normalization() -> None:
     assert config.to_dict()["dtype"] == "float32"
 
 
+def test_transformer_config_preserves_legacy_positional_optional_arguments() -> None:
+    config = TransformerConfig(
+        7,
+        5,
+        4,
+        2,
+        2,
+        3,
+        7,
+        2e-5,
+        False,
+        False,
+        False,
+        np.float32,
+        19,
+    )
+
+    assert config.number_of_heads == 1
+    assert config.layer_norm_epsilon == 2e-5
+    assert config.seed == 19
+
+
 @pytest.mark.parametrize(
     "field",
     [
@@ -70,6 +92,7 @@ def test_transformer_config_round_trip_and_dtype_normalization() -> None:
         "key_dimension",
         "value_dimension",
         "feed_forward_dimension",
+        "number_of_heads",
     ],
 )
 def test_transformer_config_rejects_nonpositive_dimensions(field: str) -> None:

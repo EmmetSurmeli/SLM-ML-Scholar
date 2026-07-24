@@ -8,7 +8,10 @@ from localml_scholar.models.transformer_lm import (
     TransformerConfig,
     TransformerLanguageModel,
 )
-from localml_scholar.nn.attention import CausalSelfAttentionHead
+from localml_scholar.nn.attention import (
+    CausalSelfAttentionHead,
+    MultiHeadCausalSelfAttention,
+)
 from localml_scholar.nn.parameter import Parameter
 from localml_scholar.nn.transformer import PreNormDecoderBlock
 from localml_scholar.tokenizer import CharacterTokenizer
@@ -21,6 +24,7 @@ __all__ = [
     "CharacterTokenizer",
     "generate_transformer_ids",
     "MLP",
+    "MultiHeadCausalSelfAttention",
     "Parameter",
     "PreNormDecoderBlock",
     "TransformerConfig",

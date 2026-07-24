@@ -4,6 +4,8 @@ from localml_scholar.nn.activations import GELU, ReLU
 from localml_scholar.nn.attention import (
     AttentionDetails,
     CausalSelfAttentionHead,
+    MultiHeadAttentionDetails,
+    MultiHeadCausalSelfAttention,
     masked_softmax,
     masked_softmax_backward,
 )
@@ -34,6 +36,8 @@ __all__ = [
     "Sequential",
     "AttentionDetails",
     "CausalSelfAttentionHead",
+    "MultiHeadAttentionDetails",
+    "MultiHeadCausalSelfAttention",
     "causal_attention_mask",
     "masked_softmax",
     "masked_softmax_backward",

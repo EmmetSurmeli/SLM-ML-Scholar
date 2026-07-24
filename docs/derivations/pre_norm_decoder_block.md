@@ -1,4 +1,10 @@
-# Pre-normalized single-head decoder block
+# Pre-normalized decoder block (original one-head derivation)
+
+This document records the Milestone 4 single-head form. Version 0.6.0 applies
+the same residual and normalization derivation with fused multi-head attention;
+the head split, concatenation, and corresponding backward equations are
+derived separately in
+[multi-head causal attention](multi_head_causal_attention.md).
 
 This document derives the forward and backward computations in
 `localml_scholar.nn.transformer`. The implementation contains one causal

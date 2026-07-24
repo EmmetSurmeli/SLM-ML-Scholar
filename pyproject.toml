@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "localml-scholar"
-version = "0.5.1"
+version = "0.6.0"
 description = "From-scratch local language-model foundations for research-paper assistance"
 readme = "README.md"
 requires-python = ">=3.10"

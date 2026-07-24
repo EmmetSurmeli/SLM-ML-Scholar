@@ -44,6 +44,7 @@ def run_experiment(
     seed: int,
     steps: int,
     output_directory: Path,
+    number_of_heads: int = 1,
 ) -> dict[str, Any]:
     """Run an interrupted-and-resumed tiny-pattern overfit demonstration."""
     corpus = "abc" * 80
@@ -53,6 +54,7 @@ def run_experiment(
         maximum_context_length=6,
         model_dimension=8,
         number_of_layers=1,
+        number_of_heads=number_of_heads,
         key_dimension=4,
         value_dimension=4,
         feed_forward_dimension=16,
@@ -147,7 +149,7 @@ def run_experiment(
     initial_ids = initial_generation[0]
     final_ids = final_generation[0]
     summary: dict[str, Any] = {
-        "milestone": "5 Part 2",
+        "milestone": 6,
         "package_version": __version__,
         "model_configuration": model_config.to_dict(),
         "training_configuration": training_config.to_dict(),
@@ -207,6 +209,7 @@ def parse_args(arguments: Sequence[str] | None = None) -> argparse.Namespace:
     )
     parser.add_argument("--seed", type=int, default=7)
     parser.add_argument("--steps", type=int, default=160)
+    parser.add_argument("--heads", type=int, default=1)
     parser.add_argument(
         "--output",
         type=Path,
@@ -225,6 +228,7 @@ def main(arguments: Sequence[str] | None = None) -> int:
         seed=args.seed,
         steps=args.steps,
         output_directory=args.output,
+        number_of_heads=args.heads,
     )
     print(json.dumps(summary, indent=2, ensure_ascii=False))
     return 0

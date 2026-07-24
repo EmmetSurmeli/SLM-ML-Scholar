@@ -89,7 +89,7 @@ Status: complete and verified.
 - learned token embeddings
 - learned absolute position embeddings with batch gradient accumulation
 - exact-shape embedding composition
-- arbitrary positive stack of independent single-head decoder blocks
+- arbitrary positive stack of independent decoder blocks
 - final LayerNorm
 - untied vocabulary projection producing \((B,T,V)\) logits
 - direct N-dimensional cross-entropy compatibility
@@ -119,32 +119,42 @@ Status: complete and verified.
 - deterministic tiny-pattern overfitting
 - configurable character-corpus training and resume CLI
 
-The verified model remains a tiny, character-level, single-head educational
-transformer. Part 2 adds no multi-head attention, retrieval, or paper
+At its 0.5.1 verification point, the model remained a tiny, character-level,
+single-head educational transformer. Part 2 added no retrieval or paper
 assistant.
 
 ## Milestone 6 — Multi-head causal self-attention
 
-Implement independently validated multi-head causal self-attention, prove that
-the one-head configuration matches the existing attention path, integrate it
-into decoder blocks and the trained language model, and compare capacity and
-training behavior without changing the tokenizer or retrieval scope.
+Status: complete and verified.
 
-Keep the first fixtures small enough to check every input and parameter
-coordinate. Preserve the verified Milestone 5 Part 2 training and checkpoint
-interfaces.
+- fused Q/K/V projections with explicit per-head dimensions
+- explicit `(B,T,H*d) -> (B,H,T,d)` layouts and inverse concatenation
+- shared causal mask with independent per-head stable softmax
+- mandatory output projection back to the model dimension
+- complete manual backward through all heads and fused projections
+- hand-computed and independent per-head reference fixtures
+- exhaustive float64 input, parameter, and decoder-block finite differences
+- exact one-head equivalence to the original implementation
+- forward/backward causality for multiple head counts
+- decoder, language-model, training, evaluation, and generation integration
+- explicit 0.5.0 model and 0.5.1 training checkpoint migration
+- exact interrupted/resumed multi-head training
+- deterministic inspection and controlled head-count comparison experiments
+
+The implementation is educational and unoptimized. It materializes quadratic
+attention tensors and makes no claim that more heads improve quality.
 
 ## Milestone 7 — Tokenization and scaled training
 
-Add:
+Improve the language-modeling foundation through tokenizer and corpus
+infrastructure, beginning with a byte-level or independently implemented BPE
+tokenizer, padding-aware batching if needed, and controlled training
+experiments before adding paper retrieval.
 
-- a byte-level or BPE tokenizer implemented from scratch
-- checkpointing and resume support
-- learning-rate schedules
-- batching by context windows
-- training and validation curves
-- a versioned model configuration system
-- TinyStories-scale experimentation where computationally feasible
+The tokenizer must remain independently implemented and versioned. Corpus
+provenance, licensing, encoding policy, train/validation isolation, unknown or
+byte handling, and checkpoint compatibility must be explicit before scaling
+data or context lengths. Do not add retrieval in this milestone.
 
 Report compute, data, wall time, and validation methodology with every run.
 

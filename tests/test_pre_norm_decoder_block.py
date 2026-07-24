@@ -103,16 +103,19 @@ def test_decoder_block_preserves_shape_across_valid_dimensions(
     assert details.normalized_attention_input.shape == inputs.shape
     assert details.attention.query.shape == (
         batch_size,
+        1,
         sequence_length,
         key_dim,
     )
     assert details.attention.value.shape == (
         batch_size,
+        1,
         sequence_length,
         value_dim,
     )
     assert details.attention.scaled_scores.shape == (
         batch_size,
+        1,
         sequence_length,
         sequence_length,
     )
@@ -153,25 +156,12 @@ def test_decoder_block_preserves_shape_across_valid_dimensions(
     )
 
 
-def test_decoder_block_without_output_projection_requires_compatible_value_dim() -> (
-    None
-):
-    compatible = PreNormDecoderBlock(
-        model_dim=3,
-        key_dim=2,
-        value_dim=3,
-        ff_hidden_dim=5,
-        attention_output_projection=False,
-        seed=5,
-    ).eval()
-    inputs = np.ones((1, 2, 3), dtype=np.float64)
-
-    assert compatible.forward(inputs).shape == inputs.shape
-    with pytest.raises(ValueError, match="value_dim must equal model_dim"):
+def test_decoder_block_requires_canonical_output_projection() -> None:
+    with pytest.raises(ValueError, match="must be True"):
         PreNormDecoderBlock(
             model_dim=3,
             key_dim=2,
-            value_dim=2,
+            value_dim=3,
             ff_hidden_dim=5,
             attention_output_projection=False,
         )
@@ -206,11 +196,12 @@ def test_attention_only_residual_matches_independent_calculation() -> None:
         ff_hidden_dim=3,
         attention_bias=False,
         feed_forward_bias=False,
-        attention_output_projection=False,
+        attention_output_projection=True,
         layer_norm_epsilon=epsilon,
         seed=11,
     ).eval()
     block.attention.value_projection.weight.load_data(np.eye(2, dtype=np.float64))
+    block.attention.output_projection.weight.load_data(np.eye(2, dtype=np.float64))
     _zero_feed_forward_output(block)
     inputs = np.array([[[1.0, 3.0]]], dtype=np.float64)
     centered = np.array([[[-1.0, 1.0]]], dtype=np.float64)
@@ -427,7 +418,7 @@ def test_decoder_checkpoint_preserves_configuration_names_and_float32_output(
 
     assert loaded.training
     assert loaded.configuration == block.configuration
-    assert loaded.configuration["model_version"] == "0.4.0"
+    assert loaded.configuration["model_version"] == "0.6.0"
     assert [name for name, _ in loaded.named_parameters()] == [
         name for name, _ in block.named_parameters()
     ]
@@ -465,8 +456,8 @@ def test_decoder_inspection_experiment_writes_verified_summary(tmp_path) -> None
     assert summary["earlier_outputs_unchanged_after_future_token_change"]
     assert summary["optimizer_changed_parameter"]
     assert summary["shapes"]["embeddings"] == [1, 4, 4]
-    assert summary["shapes"]["query"] == [1, 4, 2]
-    assert summary["shapes"]["value"] == [1, 4, 3]
+    assert summary["shapes"]["query"] == [1, 1, 4, 2]
+    assert summary["shapes"]["value"] == [1, 1, 4, 3]
     assert summary["shapes"]["feed_forward_hidden"] == [1, 4, 7]
     assert summary["shapes"]["output"] == [1, 4, 4]
     assert summary["synthetic_loss"] > 0.0

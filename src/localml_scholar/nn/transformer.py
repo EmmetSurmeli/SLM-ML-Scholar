@@ -12,16 +12,18 @@ from numpy.typing import ArrayLike, NDArray
 
 from localml_scholar.nn.activations import GELU, ReLU
 from localml_scholar.nn.attention import (
-    AttentionDetails,
-    CausalSelfAttentionHead,
+    MultiHeadAttentionDetails,
+    MultiHeadCausalSelfAttention,
 )
 from localml_scholar.nn.initialization import validate_float_dtype
 from localml_scholar.nn.linear import Linear
 from localml_scholar.nn.module import FloatArray, Module
 from localml_scholar.nn.normalization import LayerNorm
+from localml_scholar.serialization import atomic_savez
 
 _CHECKPOINT_VERSION = 1
-_MODEL_VERSION = "0.4.0"
+_FEED_FORWARD_MODEL_VERSION = "0.4.0"
+_DECODER_MODEL_VERSION = "0.6.0"
 
 
 def _positive_finite_float(value: float, name: str) -> float:
@@ -139,8 +141,7 @@ def _save_checkpoint(
     }
     for name, parameter in module.named_parameters():
         arrays[f"parameter::{name}"] = parameter.data
-    np.savez(destination, **arrays)
-    return destination
+    return atomic_savez(destination, arrays)
 
 
 def _load_checkpoint(
@@ -195,17 +196,37 @@ def _restore_checkpoint_parameters(
             "Checkpoint parameter keys do not match the module; "
             f"missing={missing}, unexpected={unexpected}."
         )
+    validated: dict[str, np.ndarray] = {}
     for name, parameter in module.named_parameters():
-        parameter.load_data(arrays[f"parameter::{name}"])
+        values = arrays[f"parameter::{name}"]
+        if values.shape != parameter.shape:
+            raise ValueError(
+                f"Checkpoint parameter {name!r} shape {values.shape} "
+                f"does not match {parameter.shape}."
+            )
+        if values.dtype != parameter.dtype:
+            raise TypeError(
+                f"Checkpoint parameter {name!r} dtype {values.dtype} "
+                f"does not match {parameter.dtype}."
+            )
+        if not np.all(np.isfinite(values)):
+            raise ValueError(f"Checkpoint parameter {name!r} must be finite.")
+        validated[name] = np.array(values, copy=True)
+    for name, parameter in module.named_parameters():
+        parameter.load_data(validated[name])
 
 
-def _constructor_configuration(configuration: dict[str, Any]) -> dict[str, Any]:
+def _constructor_configuration(
+    configuration: dict[str, Any],
+    *,
+    expected_model_version: str,
+) -> dict[str, Any]:
     normalized = dict(configuration)
     model_version = normalized.pop("model_version", None)
-    if model_version != _MODEL_VERSION:
+    if model_version != expected_model_version:
         raise ValueError(
             f"Checkpoint model version {model_version!r} "
-            f"does not match {_MODEL_VERSION!r}."
+            f"does not match {expected_model_version!r}."
         )
     return normalized
 
@@ -276,7 +297,7 @@ class TransformerFeedForward(Module):
     def configuration(self) -> dict[str, Any]:
         """Return the complete reconstruction configuration."""
         return {
-            "model_version": _MODEL_VERSION,
+            "model_version": _FEED_FORWARD_MODEL_VERSION,
             "model_dim": self.model_dim,
             "hidden_dim": self.hidden_dim,
             "bias": self.use_bias,
@@ -391,7 +412,12 @@ class TransformerFeedForward(Module):
             path,
             expected_model_type=cls.__name__,
         )
-        model = cls(**_constructor_configuration(configuration))
+        model = cls(
+            **_constructor_configuration(
+                configuration,
+                expected_model_version=_FEED_FORWARD_MODEL_VERSION,
+            )
+        )
         _restore_checkpoint_parameters(model, arrays)
         return model
 
@@ -401,7 +427,7 @@ class DecoderBlockDetails:
     """Read-only tensors from one pre-normalized decoder-block forward."""
 
     normalized_attention_input: FloatArray
-    attention: AttentionDetails
+    attention: MultiHeadAttentionDetails
     attention_output: FloatArray
     first_residual: FloatArray
     normalized_feed_forward_input: FloatArray
@@ -416,7 +442,7 @@ class _DecoderBlockCache:
 
 
 class PreNormDecoderBlock(Module):
-    """One pre-normalized single-head causal decoder block."""
+    """One pre-normalized multi-head causal decoder block."""
 
     def __init__(
         self,
@@ -424,6 +450,7 @@ class PreNormDecoderBlock(Module):
         key_dim: int,
         ff_hidden_dim: int,
         *,
+        number_of_heads: int = 1,
         value_dim: int | None = None,
         attention_bias: bool = True,
         feed_forward_bias: bool = True,
@@ -435,6 +462,10 @@ class PreNormDecoderBlock(Module):
     ) -> None:
         super().__init__()
         self.model_dim = Linear._validate_dimension(model_dim, "model_dim")
+        self.number_of_heads = Linear._validate_dimension(
+            number_of_heads,
+            "number_of_heads",
+        )
         self.key_dim = Linear._validate_dimension(key_dim, "key_dim")
         self.ff_hidden_dim = Linear._validate_dimension(
             ff_hidden_dim,
@@ -448,10 +479,10 @@ class PreNormDecoderBlock(Module):
             raise TypeError("feed_forward_bias must be a boolean.")
         if not isinstance(attention_output_projection, bool):
             raise TypeError("attention_output_projection must be a boolean.")
-        if not attention_output_projection and self.value_dim != self.model_dim:
+        if not attention_output_projection:
             raise ValueError(
-                "value_dim must equal model_dim when attention output "
-                "projection is disabled."
+                "attention_output_projection must be True for canonical "
+                "multi-head attention."
             )
         if isinstance(seed, bool) or not isinstance(seed, int):
             raise TypeError("seed must be an integer.")
@@ -480,12 +511,13 @@ class PreNormDecoderBlock(Module):
             epsilon=self.layer_norm_epsilon,
             dtype=self.dtype,
         )
-        self.attention = CausalSelfAttentionHead(
-            self.model_dim,
-            self.key_dim,
+        self.attention = MultiHeadCausalSelfAttention(
+            input_dim=self.model_dim,
+            number_of_heads=self.number_of_heads,
+            key_dim=self.key_dim,
             value_dim=self.value_dim,
             bias=attention_bias,
-            output_projection=attention_output_projection,
+            output_bias=attention_bias,
             seed=attention_seed,
             dtype=self.dtype,
         )
@@ -511,8 +543,9 @@ class PreNormDecoderBlock(Module):
     def configuration(self) -> dict[str, Any]:
         """Return the complete reconstruction configuration."""
         return {
-            "model_version": _MODEL_VERSION,
+            "model_version": _DECODER_MODEL_VERSION,
             "model_dim": self.model_dim,
+            "number_of_heads": self.number_of_heads,
             "key_dim": self.key_dim,
             "value_dim": self.value_dim,
             "ff_hidden_dim": self.ff_hidden_dim,
@@ -672,6 +705,18 @@ class PreNormDecoderBlock(Module):
             path,
             expected_model_type=cls.__name__,
         )
-        model = cls(**_constructor_configuration(configuration))
+        normalized = dict(configuration)
+        if (
+            normalized.get("model_version") == "0.4.0"
+            and "number_of_heads" not in normalized
+        ):
+            normalized["model_version"] = _DECODER_MODEL_VERSION
+            normalized["number_of_heads"] = 1
+        model = cls(
+            **_constructor_configuration(
+                normalized,
+                expected_model_version=_DECODER_MODEL_VERSION,
+            )
+        )
         _restore_checkpoint_parameters(model, arrays)
         return model
