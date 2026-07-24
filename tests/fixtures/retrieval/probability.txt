@@ -1,0 +1,4 @@
+Probability assigns numerical mass to possible outcomes.
+An expectation is a probability-weighted average of a random variable.
+Linear regression often minimizes a squared-error objective.
+The variance measures average squared deviation from the mean.

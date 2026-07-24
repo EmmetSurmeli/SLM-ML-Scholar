@@ -21,9 +21,9 @@ framework or automatic-differentiation system. This is an educational and
 engineering constraint, not a claim that a from-scratch model is automatically
 faster or more capable.
 
-## Current status: Milestone 7
+## Current status: Milestone 8
 
-The package version is `0.7.0`.
+The package version is `0.8.0`.
 
 Milestone 1 is complete and independently audited. Its character-level bigram
 learns a \(V\times V\) table of next-character logits and conditions only on
@@ -172,18 +172,42 @@ unknown token. In controlled experiments, validation text never affects the
 character vocabulary or BPE merge table. No external tokenizer library is
 used.
 
+Milestone 8 adds a transformer-independent local retrieval foundation:
+
+- strict UTF-8 plain-text and narrow ATX-Markdown ingestion
+- a page-aware adapter for externally extracted PDF text
+- deterministic document, section, and chunk identities
+- exact source character, line, heading, and known page ranges
+- validated section-local character chunking with fixed overlap
+- an independent Unicode-aware lexical tokenizer with source spans
+- sparse TF-IDF cosine retrieval implemented from its equations
+- BM25 retrieval implemented from its equations and used by default
+- explicit metadata filters, matched terms, and per-term score contributions
+- structured deterministic citations linked to exact chunks
+- versioned atomic immutable JSON indexes and corpus-change explanations
+- Precision@k, Recall@k, MRR, and Hit Rate@k evaluation
+- build, inspect, and search commands that return passages—not generated prose
+
+Retrieval can run without constructing or training a transformer. It uses no
+neural embeddings, vector database, external retrieval engine, or RAG
+framework. The original source remains distinct from case-folded index terms.
+PDF bytes are not parsed: the adapter accepts text and page numbers produced by
+an explicitly separate extraction step.
+
 The model remains tiny, educational, CPU-oriented, and unoptimized. Every
 neural-network gradient is manually implemented; there is no PyTorch, autograd,
 or external training framework.
 
-The project is **still not a useful SLM and not yet a research-paper
+The project is **still not a useful SLM and not yet a complete research-paper
 assistant**. The
 bigram cannot understand a paper, explain an equation, retrieve evidence, or
 maintain context beyond one character. The MLP is a synthetic integration
 fixture; the attention head and decoder block are numerical and causality
 fixtures. The trained transformer has only been evaluated on tiny deterministic
-character fixtures. Those experiments establish training-system correctness,
-not language understanding or paper-assistance capability.
+character fixtures. Milestone 8 can retrieve lexical matches with exact
+provenance, but it does not understand passages or generate answers. These
+experiments establish implementation behavior, not language understanding,
+paper-assistance capability, or general retrieval quality.
 
 ## Installation
 
@@ -225,7 +249,13 @@ resumption, and a bounded tiny-overfit integration test. Milestone 6 adds
 hand-computed and independent-reference multi-head tests, exact legacy
 one-head equivalence, exhaustive one- and two-head gradients, multi-head
 decoder gradients, checkpoint migration, and bitwise-exact two-head training
-resumption.
+resumption. Milestone 7 covers byte/BPE round trips, deterministic merge
+selection, split-before-fit isolation, tokenizer-aware checkpoint migration,
+and exact tokenizer resumption. Milestone 8 covers ingestion, heading
+hierarchies, PDF-derived pages, exact offsets, overlap and reconstruction,
+lexical spans, hand-computed TF-IDF/BM25 values, deterministic scored ties,
+filters, citations, malformed index rejection, metrics, CLIs, and exact
+search preservation after reload.
 
 ### Verified implementation
 
@@ -246,6 +276,19 @@ python3 experiments/inspect_multi_head_attention.py
 python3 experiments/compare_single_and_multi_head.py --steps 20
 python3 experiments/inspect_bpe_tokenizer.py
 python3 experiments/compare_tokenizers.py --steps 12
+python3 experiments/inspect_document_ingestion.py
+python3 experiments/compare_retrievers.py
+PYTHONPATH=src python3 -m localml_scholar.retrieval.search build \
+  --sources tests/fixtures/retrieval/attention.md \
+    tests/fixtures/retrieval/optimization.md \
+    tests/fixtures/retrieval/probability.txt \
+  --output outputs/retrieval_cli_smoke/index.json
+PYTHONPATH=src python3 -m localml_scholar.retrieval.search inspect \
+  --index outputs/retrieval_cli_smoke/index.json
+PYTHONPATH=src python3 -m localml_scholar.retrieval.search search \
+  --index outputs/retrieval_cli_smoke/index.json \
+  --query "How does causal masking prevent leakage?" \
+  --method bm25 --top-k 3 --verbose
 python3 experiments/overfit_tiny_transformer.py \
   --heads 1 --steps 40 \
   --output outputs/tiny_transformer_overfit_one_head
@@ -300,7 +343,7 @@ PYTHONPATH=src python3 -c \
 ```
 
 Ruff 0.15.18 reported no lint or formatting errors, `git diff --check` was
-clean, and pytest 9.1.1 reported `394 passed in 5.67s`.
+clean, and pytest 9.1.1 reported `481 passed in 6.59s`.
 The 300-step fallback-corpus smoke run used 2,094 training examples, 232
 validation examples, a 23-character vocabulary, and 529 parameters. Its best
 sampled validation loss was `1.5488034950125846` (perplexity
@@ -383,6 +426,81 @@ selection, demonstrating checkpoint-owned tokenizer restoration. The loaders
 also reopened real repository 0.5.0/0.6.0 model checkpoints and 0.5.1/0.6.0
 full-training checkpoints with their original one-/two-head configurations and
 23-character ID mapping.
+
+The authored retrieval fixture contains 3 documents, 9 exact chunks, and 121
+lexical terms in its vocabulary. Across 5 explicit relevance queries, TF-IDF
+and BM25 both measured Precision@1 `1.0`, Precision@3 `0.3333333333333333`,
+Recall@3 `1.0`, MRR `1.0`, and Hit Rate@3 `1.0`; every ranking was identical
+after index reload. The serialized index was 24,260 bytes. These values validate
+only this deliberately simple deterministic fixture and are not evidence of
+general retrieval quality.
+
+## Document ingestion and lexical retrieval
+
+Build an immutable index from explicit local text and Markdown sources:
+
+```bash
+python3 -m localml_scholar.retrieval.search build \
+  --sources notes.md appendix.txt \
+  --output outputs/local_documents/index.json
+```
+
+Inspect the complete, human-readable snapshot:
+
+```bash
+python3 -m localml_scholar.retrieval.search inspect \
+  --index outputs/local_documents/index.json
+```
+
+Retrieve exact passages with default BM25:
+
+```bash
+python3 -m localml_scholar.retrieval.search search \
+  --index outputs/local_documents/index.json \
+  --query "How does causal masking prevent leakage?" \
+  --method bm25 \
+  --top-k 5 \
+  --verbose
+```
+
+Use `--json` for structured search output. Explicit filters include
+`--document-id`, `--source-name`, `--media-type`, repeated
+`--heading-prefix`, `--publication-year`, and `--collection`. The result
+contains the exact chunk text, rank, full-precision internal score, matched
+terms, optional scoring details, and a structured citation. Every search
+payload sets `answer_generated` to `false`.
+
+The index is deterministic versioned JSON, not pickle. It embeds source
+documents, sections, chunks, configurations, sparse term statistics, hashes,
+and enough provenance to search without the original file. Writes are atomic;
+loads reconstruct and validate the complete index before returning it.
+Snapshots are immutable, so source or relevant configuration changes trigger a
+full deterministic rebuild.
+
+Run the transparent ingestion and retriever fixtures with:
+
+```bash
+python3 experiments/inspect_document_ingestion.py
+python3 experiments/compare_retrievers.py
+```
+
+The PDF-derived API accepts explicitly extracted pages:
+
+```python
+from localml_scholar import PageText, ingest_pdf_text
+
+document = ingest_pdf_text(
+    [
+        PageText(page_number=1, text="Externally extracted first page."),
+        PageText(page_number=2, text="Externally extracted second page."),
+    ],
+    source="paper.pdf",
+    title="Local paper",
+)
+```
+
+This API does not read PDF bytes, perform OCR, repair reading order, or infer
+layout. Page numbers and text are trusted only as supplied by the caller.
 
 ## Training
 
@@ -711,6 +829,8 @@ docs/
   architecture.md        Intended retrieval-plus-model system
   roadmap.md             Explicit incremental project milestones
   numerical_precision.md Float32/float64 policy
+  retrieval_cli.md       Build, inspect, and cited-search commands
+  retrieval_index_format.md Versioned immutable JSON schema
   audits/                 Evidence-backed milestone audits
   derivations/           Math connected to source functions
 experiments/             Training, inspections, and controlled comparisons
@@ -721,6 +841,7 @@ src/localml_scholar/
   nn/                     Layers, single/multi-head attention, FFN, decoder
   optim/                  SGD, momentum, and Adam
   training/               Transformer trainer, clipping, finite differences
+  retrieval/              Ingestion, exact chunks, TF-IDF/BM25, citations, CLI
   optimizers.py           Milestone 1 compatibility SGD
   generation.py           Bigram and transformer autoregressive sampling
   serialization.py        Atomic NPZ and text persistence
@@ -746,6 +867,9 @@ Mathematical details are in:
 - [transformer language model](docs/derivations/transformer_language_model.md)
 - [transformer training and generation](docs/derivations/transformer_training_and_generation.md)
 - [tokenization and byte-pair encoding](docs/derivations/tokenization_and_bpe.md)
+- [document ingestion and lexical retrieval](docs/derivations/document_ingestion_and_lexical_retrieval.md)
+- [retrieval CLI](docs/retrieval_cli.md)
+- [retrieval index format](docs/retrieval_index_format.md)
 - [Milestone 1 audit](docs/audits/milestone_1_audit.md)
 - [Milestone 2 attention-readiness audit](docs/audits/milestone_2_attention_readiness_audit.md)
 - [Milestone 3 decoder-block readiness audit](docs/audits/milestone_3_decoder_block_readiness_audit.md)
@@ -753,6 +877,7 @@ Mathematical details are in:
 - [Milestone 5 training-readiness audit](docs/audits/milestone_5_training_readiness_audit.md)
 - [Milestone 5 multi-head-readiness audit](docs/audits/milestone_5_multi_head_readiness_audit.md)
 - [Milestone 6 tokenizer/corpus-readiness audit](docs/audits/milestone_6_tokenizer_corpus_readiness_audit.md)
+- [Milestone 7 retrieval-readiness audit](docs/audits/milestone_7_retrieval_readiness_audit.md)
 
 ## Limitations
 
@@ -788,16 +913,27 @@ Mathematical details are in:
   the cropped context and has no KV cache or optimized kernel.
 - The fallback corpus exists only for tests and smoke runs. It is not useful
   training data.
+- Markdown ingestion recognizes ATX headings only; it is not a full CommonMark
+  renderer or structural parser.
+- PDF support accepts externally extracted page text only. There is no PDF
+  parser, OCR, layout analysis, equation extraction, or reading-order repair.
+- Character chunking uses transparent paragraph, punctuation, whitespace, and
+  hard-limit heuristics. It is sensitive to source boundaries.
+- Lexical retrieval cannot reliably bridge synonyms, paraphrases, equivalent
+  formulas, or terms absent from the query. There are no embeddings,
+  vector database, semantic reranker, stemming, or phrase model.
+- The reference search scans every chunk and stores overlapping text in a
+  human-inspectable JSON snapshot; it is not optimized for large collections.
+- Retrieval returns cited source passages only. It does not summarize,
+  explain, or generate an answer.
 - Generated bigram or tiny-transformer text should not be interpreted as
   meaningful general language.
 
 ## Roadmap
 
-The next recommended milestone is to build document ingestion and retrieval
-independently of the language model: parse local text and PDF-derived content,
-preserve source metadata and section boundaries, chunk documents
-deterministically, compute a transparent retrieval baseline, and return cited
-passages before attempting answer generation.
+The next recommended milestone is:
+
+> Connect retrieval to controlled grounded answer generation: construct prompts from ranked passages, require inline citations, enforce source-only answering, evaluate citation correctness and answer faithfulness, and compare the project’s own transformer against a deterministic extractive baseline before considering semantic embeddings.
 
 See [the full roadmap](docs/roadmap.md) and
 [the architecture](docs/architecture.md).

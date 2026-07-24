@@ -43,7 +43,7 @@ decorative feature.
 
 ## Implemented package boundaries
 
-Milestones 1 through 7 establish interfaces that later components can
+Milestones 1 through 8 establish interfaces that later components can
 extend:
 
 - `tokenizer.py` owns the minimal tokenizer contract, character/byte/BPE text
@@ -61,6 +61,10 @@ extend:
 - `training/` owns configuration, explicit update cycles, deterministic
   evaluation, resumable training state, global clipping, and finite
   differences.
+- `retrieval/` owns immutable source documents, exact sections/chunks,
+  retrieval-only lexical tokenization, independently implemented TF-IDF and
+  BM25, structured citations, metrics, immutable index snapshots, and the
+  build/inspect/search CLI. It imports no model or training component.
 - `models/` composes primitives into checkpointable models.
 - `optimizers.py` remains the Milestone 1 named-array SGD compatibility path.
 - `generation.py` owns bigram and tokenizer-aware transformer autoregressive
@@ -100,6 +104,55 @@ restores the snapshots. Generation and evaluation use this context. They do
 not weaken the one-forward/one-backward training contract.
 
 See `docs/numerical_precision.md` for the project-wide float32/float64 policy.
+
+## Current document and retrieval architecture
+
+Milestone 8 implements the evidence-selection side independently of the
+transformer:
+
+```text
+UTF-8 text / narrow Markdown / externally extracted PDF page text
+    ↓
+immutable Document with exact source text and deterministic identity
+    ↓
+ordered exact Section slices with heading, line, and optional page metadata
+    ↓
+deterministic section-local Chunk slices with validated coverage/overlap
+    ↓
+retrieval-only Unicode-aware lexical terms and source spans
+    ↓
+immutable TF-IDF/BM25 snapshot
+    ↓
+explicit query filters and deterministic ranking
+    ↓
+exact SearchResult passage + structured Citation + scoring contributions
+```
+
+The source and display string are never replaced by normalized index text.
+Document IDs derive from logical source plus exact UTF-8 content hash. Chunk
+IDs additionally bind source offsets, section identity, chunking configuration,
+and chunk content. User metadata remains separate from inferred ingestion
+metadata, and unknown authors, pages, years, and titles remain absent.
+
+Plain text is one root section. The Markdown adapter recognizes only ATX
+headings outside fenced code blocks; it preserves all original markup and
+content. The PDF-derived adapter accepts ordered page strings supplied by
+another local extraction step. Empty page strings are recorded in metadata and
+do not create artificial searchable text. The adapter does not parse PDF bytes,
+perform OCR, infer layout, or pretend supplied extraction is exact.
+
+`RetrievalIndex` is an immutable snapshot. Build order, vocabulary, sparse
+frequency maps, scores, tie breaks, and citations are deterministic. Its
+versioned JSON includes enough source/chunk text and metadata to search without
+the original files. Atomic saving and transactional loading validate the
+complete hash and independently rebuild all statistics before accepting state.
+Changes trigger a full rebuild and can be explained as source, content,
+chunking, lexical, or BM25 configuration differences.
+
+BM25 is the default lexical method; TF-IDF cosine is a separately implemented
+baseline. Both return only positive-score passages and transparent per-term
+evidence. Neither invokes answer generation. There are no embeddings, vector
+database, semantic reranker, or external retrieval framework.
 
 ## Current attention architecture
 
@@ -222,11 +275,12 @@ every decoder block, and the vocabulary head. `number_of_heads` is part of the
 complete checkpointed configuration. The public state loader validates every
 key, shape, dtype, and finite value before changing any parameter.
 
-Version 0.7.0 recognizes 0.5.0 and 0.6.0 model checkpoints plus 0.5.1 and 0.6.0
-full training checkpoints. Single-head legacy configuration migration still
-adds `number_of_heads=1` in memory. Legacy character vocabularies migrate into
-the unified tokenizer schema without changing IDs. Unknown versions and
-incompatible state remain errors.
+The 0.8.0 package retains the 0.7.0 model schema. Its loaders recognize 0.5.0
+and 0.6.0 model checkpoints plus 0.5.1 and 0.6.0 full training checkpoints.
+Single-head legacy configuration migration still adds `number_of_heads=1` in
+memory. Legacy character vocabularies migrate into the unified tokenizer
+schema without changing IDs. Unknown versions and incompatible state remain
+errors.
 
 ## Tokenizer and corpus architecture
 
@@ -361,6 +415,12 @@ byte-level BPE tokenizers now share a versioned contract. Controlled experiments
 fit learned tokenizers on training text only, report raw token measures and
 sampled bits per byte, and preserve tokenizer identity through model and full
 training checkpoints. The model and corpora remain deliberately tiny.
+
+Milestone 8 adds an independent evidence-retrieval system rather than another
+model layer. It ingests local text/Markdown or externally extracted PDF page
+text, preserves exact source slices, and ranks cited chunks with transparent
+TF-IDF or BM25. It does not feed those passages to the transformer and does not
+generate an answer.
 
 ## Future module constraints
 

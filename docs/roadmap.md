@@ -170,22 +170,39 @@ different token units without byte normalization.
 
 ## Milestone 8 — Document ingestion and transparent retrieval
 
+Status: complete and verified.
+
+- exact immutable documents, ordered sections, deterministic chunks, and
+  structured citations
+- strict UTF-8 plain-text and narrow ATX-Markdown ingestion
+- externally supplied page-text PDF adapter without OCR or PDF parsing
+- independent retrieval-only lexical terms with original source spans
+- exact reconstruction and overlap validation
+- independently implemented sparse TF-IDF cosine and BM25
+- deterministic ranking, metadata filters, and term-level explanations
+- versioned atomic immutable index snapshots with transactional reconstruction
+- corpus/configuration change explanations and full-rebuild policy
+- project-authored fixture corpus with exact chunk relevance judgments
+- Precision@k, Recall@k, MRR, and Hit Rate@k
+- build, inspect, and search CLI with no answer generation
+- controlled retriever comparison and ingestion inspection experiments
+
+The five-query fixture validates implementation behavior only. It does not
+establish general retrieval quality. Direct PDF extraction, semantic search,
+reranking, and answer generation remain absent.
+
+## Milestone 9 — Controlled grounded answer generation
+
 Next recommended milestone:
 
-> Build the first document ingestion and retrieval subsystem independently of
-> the language model: parse local text and PDF-derived content, preserve source
-> metadata and section boundaries, chunk documents deterministically, compute a
-> transparent retrieval baseline, and return cited passages before attempting
-> answer generation.
+> Connect retrieval to controlled grounded answer generation: construct prompts from ranked passages, require inline citations, enforce source-only answering, evaluate citation correctness and answer faithfulness, and compare the project’s own transformer against a deterministic extractive baseline before considering semantic embeddings.
 
-This milestone should keep retrieval independent of model training so newly
-loaded documents do not require retraining. Use a dedicated local PDF parsing
-library rather than parsing raw PDF bytes. Begin with a transparent lexical
-baseline, exact metadata, deterministic chunks, and evidence-return tests before
-considering learned embeddings or answer generation. Explicitly evaluate
-multi-column ordering, scanned documents, equations, and missing metadata.
+Keep the retriever independently testable, preserve exact source passages in
+the prompt record, and treat refusal on insufficient evidence as required
+behavior. Do not claim that generated prose is grounded merely because context
+was supplied; evaluate every citation and supported claim.
 
-## Milestone 9 — Correctness reference
+## Milestone 10 — Correctness reference
 
 Only after the independent implementation works:
 
@@ -198,7 +215,7 @@ Only after the independent implementation works:
 
 The reference must not become the source of the manual implementation.
 
-## Milestone 10 — ML-paper specialization
+## Milestone 11 — ML-paper specialization
 
 Build a legally usable, versioned training and evaluation corpus from:
 
@@ -224,7 +241,7 @@ Target capabilities:
 - limitation analysis
 - reproduction planning
 
-## Milestone 11 — Evaluation
+## Milestone 12 — Evaluation
 
 Create a manually reviewed benchmark with:
 
@@ -249,7 +266,7 @@ Compare:
 Factuality evaluation must point to exact page-level evidence in the supplied
 paper. Record annotator instructions and disagreement.
 
-## Milestone 12 — Local application
+## Milestone 13 — Local application
 
 Build a lightweight local interface for:
 
@@ -264,7 +281,7 @@ Build a lightweight local interface for:
 
 Define the local privacy boundary and storage paths in the interface.
 
-## Milestone 13 — Performance optimization
+## Milestone 14 — Performance optimization
 
 Profile before optimizing. Potential targets include:
 

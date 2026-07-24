@@ -1,0 +1,17 @@
+{
+  "how does a decoder prevent future token leakage": [
+    "chk_a76b0abf5cdd4dfae7c675a7"
+  ],
+  "why divide attention scores by the square root of key dimension": [
+    "chk_6e4b223da3dbb9634e816135"
+  ],
+  "what controls the gradient descent step size": [
+    "chk_5a3d13500ab89a548bf22797"
+  ],
+  "why does Adam use bias correction": [
+    "chk_2ee172c7bf8cc6750cf6ca48"
+  ],
+  "define expectation of a random variable": [
+    "chk_8ab5c58c0bbf1f435a2d8ca2"
+  ]
+}
