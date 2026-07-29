@@ -7,9 +7,11 @@ import json
 import math
 from collections import Counter
 from collections.abc import Mapping, Sequence
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from pathlib import Path
 from typing import Any
+
+import numpy as np
 
 from localml_scholar._version import __version__
 from localml_scholar.retrieval.bm25 import (
@@ -23,6 +25,19 @@ from localml_scholar.retrieval.documents import (
     Document,
     canonical_json,
 )
+from localml_scholar.retrieval.hybrid import (
+    HybridRetrievalConfig,
+    RerankingConfig,
+    fuse_rankings,
+    reranking_features,
+    source_range_overlap,
+    weighted_reranking_score,
+)
+from localml_scholar.retrieval.semantic import (
+    SemanticIndex,
+    SemanticRetrievalConfig,
+    fit_lsa,
+)
 from localml_scholar.retrieval.text import (
     LexicalTokenizerConfig,
     lexical_terms,
@@ -35,7 +50,15 @@ from localml_scholar.retrieval.tfidf import (
 )
 from localml_scholar.serialization import atomic_write_text
 
-INDEX_FORMAT_VERSION = 1
+INDEX_FORMAT_VERSION = 2
+LEGACY_INDEX_FORMAT_VERSION = 1
+_RETRIEVAL_METHODS = {
+    "tfidf",
+    "bm25",
+    "semantic",
+    "hybrid",
+    "hybrid_reranked",
+}
 
 
 def _is_sha256(value: object) -> bool:
@@ -145,7 +168,7 @@ class SearchQuery:
 
 @dataclass(frozen=True)
 class SearchResult:
-    """One exact ranked passage and transparent lexical scoring evidence."""
+    """One exact ranked passage and transparent retrieval scoring evidence."""
 
     rank: int
     score: float
@@ -162,6 +185,7 @@ class SearchResult:
     end_line: int
     text: str
     matched_terms: tuple[str, ...]
+    semantic_query_terms: tuple[str, ...]
     term_contributions: tuple[dict[str, Any], ...]
     scoring_details: dict[str, Any]
     citation: Citation
@@ -173,13 +197,19 @@ class SearchResult:
             raise ValueError("rank starts at one.")
         if not math.isfinite(self.score) or self.score < 0.0:
             raise ValueError("Search score must be finite and non-negative.")
-        if self.retrieval_method not in {"tfidf", "bm25"}:
+        if self.retrieval_method not in _RETRIEVAL_METHODS:
             raise ValueError("Unknown retrieval method.")
         if self.authors is not None and (
             not isinstance(self.authors, tuple)
             or not all(isinstance(author, str) and author for author in self.authors)
         ):
             raise ValueError("authors must be None or a tuple of strings.")
+        for name in ("matched_terms", "semantic_query_terms"):
+            value = getattr(self, name)
+            if not isinstance(value, tuple) or not all(
+                isinstance(term, str) and term for term in value
+            ):
+                raise ValueError(f"{name} must be a tuple of non-empty strings.")
         if self.citation.chunk_id != self.chunk_id:
             raise ValueError("Citation must link to the exact result chunk.")
         canonical_json(list(self.term_contributions))
@@ -202,6 +232,7 @@ class SearchResult:
             "end_line": self.end_line,
             "text": self.text,
             "matched_terms": list(self.matched_terms),
+            "semantic_query_terms": list(self.semantic_query_terms),
             "term_contributions": list(self.term_contributions),
             "scoring_details": self.scoring_details,
             "citation": self.citation.to_dict(),
@@ -226,6 +257,8 @@ class RetrievalIndex:
         corpus_sha256: str,
         index_sha256: str,
         package_version: str = __version__,
+        semantic_index: SemanticIndex | None = None,
+        index_format_version: int = INDEX_FORMAT_VERSION,
     ) -> None:
         if not documents or not chunks:
             raise ValueError("Retrieval index requires documents and chunks.")
@@ -292,6 +325,22 @@ class RetrievalIndex:
                 raise ValueError("Corpus identity must be a SHA-256 digest.")
         if not isinstance(package_version, str) or not package_version:
             raise ValueError("package_version must be a non-empty string.")
+        if index_format_version not in {
+            LEGACY_INDEX_FORMAT_VERSION,
+            INDEX_FORMAT_VERSION,
+        }:
+            raise ValueError("Unsupported retrieval index format version.")
+        if semantic_index is not None:
+            if not isinstance(semantic_index, SemanticIndex):
+                raise TypeError("semantic_index must be SemanticIndex or None.")
+            if semantic_index.vocabulary != vocabulary:
+                raise ValueError("Semantic and lexical vocabularies do not align.")
+            if semantic_index.chunk_ids != tuple(chunk.chunk_id for chunk in chunks):
+                raise ValueError("Semantic and lexical chunk order does not align.")
+            if index_format_version != INDEX_FORMAT_VERSION:
+                raise ValueError(
+                    "Legacy lexical indexes cannot contain semantic state."
+                )
         self.documents = documents
         self.chunks = chunks
         self.index_config = index_config
@@ -304,6 +353,8 @@ class RetrievalIndex:
         self.corpus_sha256 = corpus_sha256
         self.index_sha256 = index_sha256
         self.package_version = package_version
+        self.semantic_index = semantic_index
+        self.index_format_version = index_format_version
         self._document_by_id = {
             document.document_id: document for document in documents
         }
@@ -394,6 +445,7 @@ class RetrievalIndex:
             vocabulary=vocabulary,
             corpus_sha256=corpus_hash,
             index_sha256="pending",
+            index_format_version=INDEX_FORMAT_VERSION,
         )
         index_hash = provisional._calculated_index_hash()
         return cls(
@@ -408,13 +460,18 @@ class RetrievalIndex:
             vocabulary=vocabulary,
             corpus_sha256=corpus_hash,
             index_sha256=index_hash,
+            index_format_version=INDEX_FORMAT_VERSION,
         )
 
     def _state_without_index_hash(self) -> dict[str, Any]:
-        return {
-            "index_format_version": INDEX_FORMAT_VERSION,
+        state = {
+            "index_format_version": self.index_format_version,
             "package_version": self.package_version,
-            "index_type": "immutable_lexical_snapshot",
+            "index_type": (
+                "immutable_lexical_snapshot"
+                if self.index_format_version == LEGACY_INDEX_FORMAT_VERSION
+                else "immutable_retrieval_snapshot"
+            ),
             "index_config": self.index_config.to_dict(),
             "chunking_config": self.chunking_config.to_dict(),
             "lexical_config": self.lexical_config.to_dict(),
@@ -427,6 +484,11 @@ class RetrievalIndex:
             "average_chunk_length": self.average_chunk_length,
             "corpus_sha256": self.corpus_sha256,
         }
+        if self.index_format_version == INDEX_FORMAT_VERSION:
+            state["semantic_index"] = (
+                None if self.semantic_index is None else self.semantic_index.to_dict()
+            )
+        return state
 
     def _calculated_index_hash(self) -> str:
         return hashlib.sha256(
@@ -470,7 +532,7 @@ class RetrievalIndex:
 
     @classmethod
     def from_state_dict(cls, state: Mapping[str, Any]) -> RetrievalIndex:
-        expected = {
+        common = {
             "index_format_version",
             "package_version",
             "index_type",
@@ -487,14 +549,32 @@ class RetrievalIndex:
             "corpus_sha256",
             "index_sha256",
         }
-        if not isinstance(state, Mapping) or set(state) != expected:
+        if not isinstance(state, Mapping):
+            raise ValueError("Retrieval index state must be a mapping.")
+        version = state.get("index_format_version")
+        expected = (
+            common
+            if version == LEGACY_INDEX_FORMAT_VERSION
+            else common | {"semantic_index"}
+        )
+        if set(state) != expected:
             raise ValueError("Retrieval index state keys are malformed.")
         values = dict(state)
-        if values["index_format_version"] != INDEX_FORMAT_VERSION:
+        if version not in {LEGACY_INDEX_FORMAT_VERSION, INDEX_FORMAT_VERSION}:
             raise ValueError("Unsupported retrieval index format version.")
-        if values["index_type"] != "immutable_lexical_snapshot":
+        expected_type = (
+            "immutable_lexical_snapshot"
+            if version == LEGACY_INDEX_FORMAT_VERSION
+            else "immutable_retrieval_snapshot"
+        )
+        if values["index_type"] != expected_type:
             raise ValueError("Retrieval index type is incompatible.")
-        if values["package_version"] != __version__:
+        if version == LEGACY_INDEX_FORMAT_VERSION:
+            if values["package_version"] not in {"0.8.0", "0.9.0"}:
+                raise ValueError(
+                    "Legacy retrieval index package version is incompatible."
+                )
+        elif values["package_version"] != __version__:
             raise ValueError("Retrieval index package version is incompatible.")
         for name in ("documents", "chunks", "vocabulary", "term_frequencies"):
             if not isinstance(values[name], list):
@@ -527,6 +607,12 @@ class RetrievalIndex:
             )
         if not all(isinstance(term, str) and term for term in values["vocabulary"]):
             raise ValueError("Retrieval vocabulary entries must be strings.")
+        semantic_state = values.get("semantic_index")
+        if semantic_state is not None and not isinstance(semantic_state, Mapping):
+            raise ValueError("semantic_index must be null or an object.")
+        semantic_index = (
+            None if semantic_state is None else SemanticIndex.from_dict(semantic_state)
+        )
         index = cls(
             documents=tuple(Document.from_dict(item) for item in values["documents"]),
             chunks=tuple(Chunk.from_dict(item) for item in values["chunks"]),
@@ -542,6 +628,8 @@ class RetrievalIndex:
             corpus_sha256=values["corpus_sha256"],
             index_sha256=values["index_sha256"],
             package_version=values["package_version"],
+            semantic_index=semantic_index,
+            index_format_version=version,
         )
         if values["average_chunk_length"] != index.average_chunk_length:
             raise ValueError("Serialized average chunk length is inconsistent.")
@@ -554,9 +642,94 @@ class RetrievalIndex:
             lexical_config=index.lexical_config,
             bm25_config=index.bm25_config,
         )
-        if rebuilt.state_dict() != index.state_dict():
+        lexical_attributes = (
+            "documents",
+            "chunks",
+            "index_config",
+            "chunking_config",
+            "lexical_config",
+            "bm25_config",
+            "term_frequencies",
+            "document_frequencies",
+            "vocabulary",
+            "corpus_sha256",
+        )
+        if any(
+            getattr(rebuilt, name) != getattr(index, name)
+            for name in lexical_attributes
+        ):
             raise ValueError("Retrieval index statistics do not reconstruct exactly.")
+        if semantic_index is not None:
+            rebuilt_semantic = fit_lsa(
+                term_frequencies=index.term_frequencies,
+                document_frequencies=index.document_frequencies,
+                vocabulary=index.vocabulary,
+                chunk_ids=tuple(chunk.chunk_id for chunk in index.chunks),
+                config=semantic_index.config,
+            )
+            if rebuilt_semantic.to_dict() != semantic_index.to_dict():
+                raise ValueError(
+                    "Semantic index factors do not reconstruct deterministically."
+                )
         return index
+
+    def enrich_semantic(
+        self,
+        config: SemanticRetrievalConfig | None = None,
+    ) -> RetrievalIndex:
+        """Return a new snapshot with deterministic LSA state and unchanged chunks."""
+        if self.semantic_index is not None and config is None:
+            return self
+        resolved = config or SemanticRetrievalConfig()
+        if not isinstance(resolved, SemanticRetrievalConfig):
+            raise TypeError("config must be SemanticRetrievalConfig.")
+        if self.semantic_index is not None:
+            if self.semantic_index.config != resolved:
+                raise ValueError(
+                    "Semantic enrichment configuration does not match the "
+                    "existing semantic state; enrich the original lexical "
+                    "snapshot to change configuration."
+                )
+            return self
+        semantic_index = fit_lsa(
+            term_frequencies=self.term_frequencies,
+            document_frequencies=self.document_frequencies,
+            vocabulary=self.vocabulary,
+            chunk_ids=tuple(chunk.chunk_id for chunk in self.chunks),
+            config=resolved,
+        )
+        provisional = RetrievalIndex(
+            documents=self.documents,
+            chunks=self.chunks,
+            index_config=self.index_config,
+            chunking_config=self.chunking_config,
+            lexical_config=self.lexical_config,
+            bm25_config=self.bm25_config,
+            term_frequencies=self.term_frequencies,
+            document_frequencies=self.document_frequencies,
+            vocabulary=self.vocabulary,
+            corpus_sha256=self.corpus_sha256,
+            index_sha256="pending",
+            package_version=__version__,
+            semantic_index=semantic_index,
+            index_format_version=INDEX_FORMAT_VERSION,
+        )
+        return RetrievalIndex(
+            documents=provisional.documents,
+            chunks=provisional.chunks,
+            index_config=provisional.index_config,
+            chunking_config=provisional.chunking_config,
+            lexical_config=provisional.lexical_config,
+            bm25_config=provisional.bm25_config,
+            term_frequencies=provisional.term_frequencies,
+            document_frequencies=provisional.document_frequencies,
+            vocabulary=provisional.vocabulary,
+            corpus_sha256=provisional.corpus_sha256,
+            index_sha256=provisional._calculated_index_hash(),
+            package_version=__version__,
+            semantic_index=semantic_index,
+            index_format_version=INDEX_FORMAT_VERSION,
+        )
 
     def _matches_filters(
         self,
@@ -597,10 +770,14 @@ class RetrievalIndex:
         method: str = "bm25",
         top_k: int = 5,
         filters: SearchFilters | None = None,
+        hybrid_config: HybridRetrievalConfig | None = None,
+        reranking_config: RerankingConfig | None = None,
     ) -> tuple[SearchResult, ...]:
         """Return ranked source passages only; this method never generates prose."""
-        if method not in {"tfidf", "bm25"}:
-            raise ValueError("method must be 'tfidf' or 'bm25'.")
+        if method not in _RETRIEVAL_METHODS:
+            raise ValueError(
+                "method must be tfidf, bm25, semantic, hybrid, or hybrid_reranked."
+            )
         if isinstance(query, str):
             resolved = SearchQuery.from_text(
                 query,
@@ -616,6 +793,93 @@ class RetrievalIndex:
             resolved = query
         else:
             raise TypeError("query must be text or SearchQuery.")
+        if method in {"tfidf", "bm25"}:
+            if hybrid_config is not None or reranking_config is not None:
+                raise ValueError(
+                    "Hybrid and reranking configuration require a hybrid method."
+                )
+            return self._search_lexical(resolved, method)
+        if method == "semantic":
+            if hybrid_config is not None or reranking_config is not None:
+                raise ValueError(
+                    "Hybrid and reranking configuration do not apply to semantic "
+                    "search."
+                )
+            return self._search_semantic(resolved)
+        resolved_hybrid = hybrid_config or HybridRetrievalConfig()
+        if not isinstance(resolved_hybrid, HybridRetrievalConfig):
+            raise TypeError("hybrid_config must be HybridRetrievalConfig.")
+        if method == "hybrid" and reranking_config is not None:
+            raise ValueError("reranking_config requires method='hybrid_reranked'.")
+        resolved_reranking = (
+            None if method == "hybrid" else reranking_config or RerankingConfig()
+        )
+        return self._search_hybrid(
+            resolved,
+            method=method,
+            hybrid_config=resolved_hybrid,
+            reranking_config=resolved_reranking,
+        )
+
+    def _make_result(
+        self,
+        *,
+        rank: int,
+        score: float,
+        method: str,
+        chunk: Chunk,
+        document: Document,
+        matched_terms: tuple[str, ...],
+        semantic_query_terms: tuple[str, ...] = (),
+        contributions: tuple[dict[str, Any], ...],
+        details: dict[str, Any],
+    ) -> SearchResult:
+        user_metadata = document.metadata.get("user", {})
+        authors_value = user_metadata.get("authors")
+        authors = (
+            tuple(authors_value)
+            if isinstance(authors_value, list)
+            and all(isinstance(author, str) and author for author in authors_value)
+            else None
+        )
+        citation = Citation(
+            document_id=document.document_id,
+            source_name=document.source_name,
+            title=document.title,
+            heading_path=chunk.heading_path,
+            page_start=chunk.page_start,
+            page_end=chunk.page_end,
+            start_line=chunk.start_line,
+            end_line=chunk.end_line,
+            chunk_id=chunk.chunk_id,
+        )
+        return SearchResult(
+            rank=rank,
+            score=float(score),
+            retrieval_method=method,
+            chunk_id=chunk.chunk_id,
+            document_id=document.document_id,
+            source_name=document.source_name,
+            title=document.title,
+            authors=authors,
+            heading_path=chunk.heading_path,
+            page_start=chunk.page_start,
+            page_end=chunk.page_end,
+            start_line=chunk.start_line,
+            end_line=chunk.end_line,
+            text=chunk.text,
+            matched_terms=matched_terms,
+            semantic_query_terms=semantic_query_terms,
+            term_contributions=contributions,
+            scoring_details=details,
+            citation=citation,
+        )
+
+    def _search_lexical(
+        self,
+        resolved: SearchQuery,
+        method: str,
+    ) -> tuple[SearchResult, ...]:
         query_counts = dict(sorted(Counter(resolved.normalized_terms).items()))
         query_weights = sparse_tfidf_weights(
             query_counts,
@@ -718,48 +982,297 @@ class RetrievalIndex:
             scored[: resolved.top_k],
             start=1,
         ):
-            user_metadata = document.metadata.get("user", {})
-            authors_value = user_metadata.get("authors")
-            authors = (
-                tuple(authors_value)
-                if isinstance(authors_value, list)
-                and all(isinstance(author, str) and author for author in authors_value)
-                else None
-            )
-            citation = Citation(
-                document_id=document.document_id,
-                source_name=document.source_name,
-                title=document.title,
-                heading_path=chunk.heading_path,
-                page_start=chunk.page_start,
-                page_end=chunk.page_end,
-                start_line=chunk.start_line,
-                end_line=chunk.end_line,
-                chunk_id=chunk.chunk_id,
-            )
             results.append(
-                SearchResult(
+                self._make_result(
                     rank=rank,
                     score=score,
-                    retrieval_method=method,
-                    chunk_id=chunk.chunk_id,
-                    document_id=document.document_id,
-                    source_name=document.source_name,
-                    title=document.title,
-                    authors=authors,
-                    heading_path=chunk.heading_path,
-                    page_start=chunk.page_start,
-                    page_end=chunk.page_end,
-                    start_line=chunk.start_line,
-                    end_line=chunk.end_line,
-                    text=chunk.text,
+                    method=method,
+                    chunk=chunk,
+                    document=document,
                     matched_terms=tuple(record["term"] for record in contributions),
-                    term_contributions=contributions,
-                    scoring_details=details,
-                    citation=citation,
+                    semantic_query_terms=(),
+                    contributions=contributions,
+                    details=details,
                 )
             )
         return tuple(results)
+
+    def _search_semantic(
+        self,
+        resolved: SearchQuery,
+    ) -> tuple[SearchResult, ...]:
+        semantic = self.semantic_index
+        if semantic is None:
+            raise ValueError(
+                "Semantic retrieval is unavailable for this lexical-only index; "
+                "enrich it explicitly first."
+            )
+        projection = semantic.project_query(
+            resolved.normalized_terms,
+            self.document_frequencies,
+        )
+        if projection.raw_norm == 0.0:
+            return ()
+        scores, numerators = semantic.cosine_scores(projection)
+        scored: list[
+            tuple[
+                float,
+                Chunk,
+                Document,
+                dict[str, Any],
+                tuple[str, ...],
+            ]
+        ] = []
+        for position, chunk in enumerate(self.chunks):
+            document = self._document_by_id[chunk.document_id]
+            if not self._matches_filters(chunk, document, resolved.filters):
+                continue
+            score = float(scores[position])
+            if score <= 0.0:
+                continue
+            coordinate_products = (
+                semantic.chunk_embeddings[position] * projection.embedding
+            )
+            strongest = sorted(
+                (
+                    {
+                        "coordinate": coordinate,
+                        "product": float(product),
+                    }
+                    for coordinate, product in enumerate(coordinate_products)
+                ),
+                key=lambda record: (
+                    -abs(record["product"]),
+                    record["coordinate"],
+                ),
+            )
+            details = {
+                "semantic_method": semantic.config.method,
+                "semantic_sha256": semantic.semantic_sha256,
+                "latent_dimension": semantic.config.dimensions,
+                "query_raw_norm": projection.raw_norm,
+                "query_stored_norm": float(np.linalg.norm(projection.embedding)),
+                "chunk_raw_norm": float(semantic.chunk_raw_norms[position]),
+                "chunk_stored_norm": float(
+                    np.linalg.norm(semantic.chunk_embeddings[position])
+                ),
+                "cosine_numerator": float(numerators[position]),
+                "known_query_terms": list(projection.known_terms),
+                "out_of_vocabulary_query_terms": list(
+                    projection.out_of_vocabulary_terms
+                ),
+                "query_tfidf_weights": projection.tfidf_weights,
+                "query_term_latent_norms": projection.term_latent_norms,
+                "strongest_latent_coordinate_products": strongest,
+                "latent_dimension_labels": None,
+                "similarity_is_not_proof_of_relevance": True,
+            }
+            exact_matches = tuple(
+                sorted(
+                    set(projection.known_terms) & set(self.term_frequencies[position])
+                )
+            )
+            scored.append((score, chunk, document, details, exact_matches))
+        scored.sort(
+            key=lambda item: (
+                -item[0],
+                item[1].document_id,
+                item[1].ordinal,
+                item[1].chunk_id,
+            )
+        )
+        contributions = tuple(
+            {
+                "term": term,
+                "query_weight": projection.tfidf_weights[term],
+                "latent_contribution_norm": projection.term_latent_norms[term],
+            }
+            for term in projection.known_terms
+        )
+        return tuple(
+            self._make_result(
+                rank=rank,
+                score=score,
+                method="semantic",
+                chunk=chunk,
+                document=document,
+                matched_terms=exact_matches,
+                semantic_query_terms=projection.known_terms,
+                contributions=contributions,
+                details=details,
+            )
+            for rank, (score, chunk, document, details, exact_matches) in enumerate(
+                scored[: resolved.top_k],
+                start=1,
+            )
+        )
+
+    def _search_hybrid(
+        self,
+        resolved: SearchQuery,
+        *,
+        method: str,
+        hybrid_config: HybridRetrievalConfig,
+        reranking_config: RerankingConfig | None,
+    ) -> tuple[SearchResult, ...]:
+        lexical_query = replace(
+            resolved,
+            top_k=hybrid_config.lexical_candidate_count,
+        )
+        semantic_query = replace(
+            resolved,
+            top_k=hybrid_config.semantic_candidate_count,
+        )
+        lexical_results = self._search_lexical(
+            lexical_query,
+            hybrid_config.lexical_method,
+        )
+        semantic_results = self._search_semantic(semantic_query)
+        lexical_by_id = {result.chunk_id: result for result in lexical_results}
+        semantic_by_id = {result.chunk_id: result for result in semantic_results}
+        chunk_by_id = {chunk.chunk_id: chunk for chunk in self.chunks}
+        fused: list[SearchResult] = []
+        for candidate in fuse_rankings(
+            lexical_results,
+            semantic_results,
+            config=hybrid_config,
+        ):
+            if candidate["score"] <= 0.0:
+                continue
+            chunk = chunk_by_id[candidate["chunk_id"]]
+            document = self._document_by_id[chunk.document_id]
+            lexical_result = lexical_by_id.get(chunk.chunk_id)
+            semantic_result = semantic_by_id.get(chunk.chunk_id)
+            matched_terms = tuple(
+                sorted(
+                    {
+                        term
+                        for result in (lexical_result, semantic_result)
+                        if result is not None
+                        for term in result.matched_terms
+                    }
+                )
+            )
+            semantic_query_terms = tuple(
+                sorted(
+                    {
+                        term
+                        for result in (lexical_result, semantic_result)
+                        if result is not None
+                        for term in result.semantic_query_terms
+                    }
+                )
+            )
+            contributions = (
+                () if lexical_result is None else lexical_result.term_contributions
+            )
+            details = {
+                "fusion": candidate,
+                "lexical_scoring": (
+                    None if lexical_result is None else lexical_result.scoring_details
+                ),
+                "semantic_scoring": (
+                    None if semantic_result is None else semantic_result.scoring_details
+                ),
+                "deterministic_tie_break": ("score_desc_document_id_ordinal_chunk_id"),
+            }
+            fused.append(
+                self._make_result(
+                    rank=1,
+                    score=candidate["score"],
+                    method="hybrid",
+                    chunk=chunk,
+                    document=document,
+                    matched_terms=matched_terms,
+                    semantic_query_terms=semantic_query_terms,
+                    contributions=contributions,
+                    details=details,
+                )
+            )
+        fused.sort(
+            key=lambda result: (
+                -result.score,
+                result.document_id,
+                chunk_by_id[result.chunk_id].ordinal,
+                result.chunk_id,
+            )
+        )
+        fused = [
+            replace(result, rank=rank) for rank, result in enumerate(fused, start=1)
+        ]
+        if method == "hybrid":
+            return tuple(fused[: resolved.top_k])
+        if reranking_config is None or not reranking_config.enabled:
+            raise ValueError("hybrid_reranked requires an enabled RerankingConfig.")
+        remaining = list(fused[: reranking_config.candidate_count])
+        selected: list[SearchResult] = []
+        while remaining and len(selected) < resolved.top_k:
+            rescored: list[tuple[SearchResult, float, dict[str, Any]]] = []
+            for result in remaining:
+                chunk = chunk_by_id[result.chunk_id]
+                document = self._document_by_id[result.document_id]
+                overlap = max(
+                    (
+                        source_range_overlap(
+                            chunk,
+                            chunk_by_id[chosen.chunk_id],
+                        )
+                        for chosen in selected
+                    ),
+                    default=0.0,
+                )
+                features = reranking_features(
+                    query=resolved.raw_text,
+                    chunk=chunk,
+                    document=document,
+                    fusion_details=result.scoring_details["fusion"],
+                    document_frequencies=self.document_frequencies,
+                    chunk_count=len(self.chunks),
+                )
+                score, contributions = weighted_reranking_score(
+                    features,
+                    reranking_config,
+                    redundancy_overlap=overlap,
+                )
+                details = {
+                    "config": reranking_config.to_dict(),
+                    "features": features,
+                    "contributions": contributions,
+                    "unclamped_score": score - contributions["clamp_adjustment"],
+                    "maximum_selected_source_overlap": overlap,
+                    "redundancy_penalty_applied": (
+                        overlap >= reranking_config.redundancy_threshold
+                    ),
+                    "final_score": score,
+                    "tie_break": "score_desc_document_id_ordinal_chunk_id",
+                }
+                rescored.append((result, score, details))
+            rescored.sort(
+                key=lambda item: (
+                    -item[1],
+                    item[0].document_id,
+                    chunk_by_id[item[0].chunk_id].ordinal,
+                    item[0].chunk_id,
+                )
+            )
+            chosen, score, reranking_details = rescored[0]
+            if score <= 0.0:
+                break
+            updated_details = dict(chosen.scoring_details)
+            updated_details["reranker"] = reranking_details
+            selected.append(
+                replace(
+                    chosen,
+                    rank=len(selected) + 1,
+                    score=score,
+                    retrieval_method="hybrid_reranked",
+                    scoring_details=updated_details,
+                )
+            )
+            remaining = [
+                result for result in remaining if result.chunk_id != chosen.chunk_id
+            ]
+        return tuple(selected)
 
     def change_reasons(
         self,

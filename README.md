@@ -21,9 +21,9 @@ framework or automatic-differentiation system. This is an educational and
 engineering constraint, not a claim that a from-scratch model is automatically
 faster or more capable.
 
-## Current status: Milestone 9
+## Current status: Milestone 10
 
-The package version is `0.9.0`.
+The package version is `1.0.0`.
 
 Milestone 1 is complete and independently audited. Its character-level bigram
 learns a \(V\times V\) table of next-character logits and conditions only on
@@ -218,22 +218,48 @@ citation proves linkage to one exact retrieved passage; it does not prove the
 claim is semantically true. Likewise, lexical support heuristics do not prove
 entailment.
 
+Milestone 10 adds a local semantic and hybrid retrieval baseline:
+
+- deterministic dense TF-IDF term-chunk matrices
+- NumPy truncated SVD with explicit effective-rank checks
+- deterministic SVD sign canonicalization
+- normalized LSA chunk vectors and exact full-corpus cosine search
+- query projection with known and out-of-vocabulary term reporting
+- maximum-positive-score weighted lexical/semantic fusion
+- reciprocal rank fusion with explicit component ranks and weights
+- transparent feature-based reranking with source-range redundancy penalties
+- version 2 semantic index persistence and explicit legacy-index enrichment
+- Average Precision, graded nDCG, mean relevant rank, no-result, and category
+  evaluation
+- authored synonym, paraphrase, notation, acronym, identifier, numerical,
+  negation, broad, multi-source, and misleading-overlap fixtures
+- retrieval ablation, descriptive sensitivity, inspection, and
+  grounded-answer regression experiments
+
+The semantic baseline is **latent semantic analysis**, not a neural embedding
+model. It is local, deterministic, distributional, linear, and
+corpus-dependent. Semantic similarity can select different chunks but does not
+prove relevance, truth, or entailment. Exact citations still come only from
+the original immutable chunks. No external embedding API, model download,
+vector database, approximate index, or neural reranker is used.
+
 The model remains tiny, educational, CPU-oriented, and unoptimized. Every
 neural-network gradient is manually implemented; there is no PyTorch, autograd,
 or external training framework.
 
-The project is now an **early paper-assistant prototype, not a production
-research assistant**. The
+The project is now a **feature-complete local research prototype, not a
+production research assistant**. The
 bigram cannot understand a paper, explain an equation, retrieve evidence, or
 maintain context beyond one character. The MLP is a synthetic integration
 fixture; the attention head and decoder block are numerical and causality
 fixtures. The trained transformer has only been evaluated on tiny deterministic
-character fixtures. Milestone 9 can produce cited extractive answers and can
-validate output from an explicit local checkpoint, but it does not understand
+character fixtures. Milestones 9–10 can produce cited extractive answers,
+select evidence with lexical/LSA/hybrid retrieval, and validate output from an
+explicit local checkpoint, but the system does not understand
 passages, prove truth, or supply a useful pretrained model. These experiments
 establish implementation behavior, not general language understanding,
 paper-assistance capability, or retrieval quality. No external LLM, API,
-semantic embedding, vector database, or web search is used.
+embedding model, vector database, or web search is used.
 
 ## Installation
 
@@ -287,11 +313,16 @@ prompt budgeting with byte/BPE tokenizers, prompt-injection-like source text,
 strict citation parsing, claim attachment and coverage, number/negation/symbol
 diagnostics, raw generation retention, acceptance/fallback, index/evidence
 hash revalidation, answer artifacts, authored metrics, CLIs, and experiments.
+Milestone 10 covers matrix alignment, SVD reconstruction/sign equivalence,
+rank truncation, query projection and OOV behavior, exact semantic cosine,
+fusion endpoints and RRF arithmetic, reranking features and redundancy,
+legacy enrichment, semantic serialization, MAP/nDCG/category metrics, CLIs,
+answer regression, and deterministic experiment artifacts.
 
 ### Verified implementation
 
 The following commands were executed successfully from the repository root on
-2026-07-23 with Python 3.13.5, NumPy 2.4.3, pytest 9.1.1, and Ruff 0.15.18:
+2026-07-24 with Python 3.13.5, NumPy 2.4.3, pytest 9.1.1, and Ruff 0.15.18:
 
 ```bash
 python3 -m ruff format .
@@ -320,6 +351,14 @@ python3 experiments/compare_answer_methods.py \
   --checkpoint outputs/m9_random_checkpoint/random_model.npz \
   --maximum-new-tokens 1 \
   --output-directory outputs/m9_answer_method_comparison
+python3 experiments/evaluate_retrieval_ablation.py \
+  --output-directory outputs/m10_retrieval_ablation
+python3 experiments/analyze_hybrid_sensitivity.py \
+  --output-directory outputs/m10_hybrid_sensitivity
+python3 experiments/inspect_semantic_retrieval.py \
+  --output-directory outputs/m10_semantic_inspection
+python3 experiments/evaluate_grounded_retrievers.py \
+  --output-directory outputs/m10_grounded_retrievers
 PYTHONPATH=src python3 -m localml_scholar.answering.cli \
   --index outputs/m9_extractive_evaluation/fixture_index.json \
   --question "How does causal masking prevent leakage?" \
@@ -390,7 +429,7 @@ PYTHONPATH=src python3 -c \
 ```
 
 Ruff 0.15.18 reported no lint or formatting errors, `git diff --check` was
-clean, and pytest 9.1.1 reported `532 passed in 3.20s`.
+clean, and pytest 9.1.1 reported `571 passed in 3.31s`.
 The 300-step fallback-corpus smoke run used 2,094 training examples, 232
 validation examples, a 23-character vocabulary, and 529 parameters. Its best
 sampled validation loss was `1.5488034950125846` (perplexity
@@ -511,7 +550,32 @@ key-fact recall `0.2`, and generative rejection rate `1.0`; fallback restored
 the extractive metrics and recorded fallback rate `0.8` over all questions.
 No claim is made that this random model represents useful generative quality.
 
-## Document ingestion and lexical retrieval
+The Milestone 10 retrieval fixture contains 4 authored documents, 17 exact
+chunks, 247 lexical terms, and 13 graded queries across 13 disclosed
+categories. The six-dimensional LSA snapshot had effective rank 17 and
+retained squared singular-value fraction `0.5476287297722253`; its serialized
+index was 101,660 bytes. BM25 measured MRR `0.8589743589743589`, MAP
+`0.823076923076923`, Recall@5 `0.8846153846153846`, and nDCG@5
+`0.8463515913631178`. Semantic-only measured MRR `0.7974358974358975`, MAP
+`0.7217948717948718`, Recall@5 `0.8846153846153846`, and nDCG@5
+`0.7688518004068944`; it missed the acronym query in the first five results.
+Weighted hybrid and reranked hybrid increased Recall@5 to
+`0.9230769230769231` but did not improve MRR or MAP over BM25. Every method
+had a disclosed category failure. The sensitivity study tested 13 settings;
+latent-dimension MRR ranged from `0.7948717948717949` to
+`0.8487179487179487`. These are descriptive authored-fixture results, not
+evidence of general semantic-retrieval superiority.
+
+In the 10-question grounded-answer regression, BM25, semantic, hybrid, and
+hybrid-reranked extractive paths all kept citation validity and coverage at
+`1.0`, answerability decisions at `1.0`, and unsupported-claim count at zero.
+Semantic and hybrid key-fact recall was `0.8`, compared with `0.85` for BM25
+and reranked hybrid; citation recall was `0.95` for semantic/hybrid and `1.0`
+for BM25/reranked hybrid. No generative retrieval comparison was fabricated:
+that experiment is explicitly recorded as not run without a supplied
+checkpoint.
+
+## Document ingestion and local retrieval
 
 Build an immutable index from explicit local text and Markdown sources:
 
@@ -545,6 +609,33 @@ Use `--json` for structured search output. Explicit filters include
 contains the exact chunk text, rank, full-precision internal score, matched
 terms, optional scoring details, and a structured citation. Every search
 payload sets `answer_generated` to `false`.
+
+Enrich a lexical index with deterministic TF-IDF LSA:
+
+```bash
+python3 -m localml_scholar.retrieval.search enrich \
+  --index outputs/local_documents/index.json \
+  --output outputs/local_documents/index_lsa.json \
+  --dimensions 8
+```
+
+Search the enriched snapshot with hybrid RRF and deterministic reranking:
+
+```bash
+python3 -m localml_scholar.retrieval.search search \
+  --index outputs/local_documents/index_lsa.json \
+  --query "Why can later tokens not affect earlier predictions?" \
+  --method hybrid \
+  --lexical-method bm25 \
+  --fusion rrf \
+  --rerank \
+  --top-k 5 \
+  --verbose
+```
+
+LSA vectors change ranking only. Returned text, chunk IDs, document metadata,
+and citations remain exact source objects. A lexical-only index raises for
+semantic methods until explicitly enriched; no hidden lexical fallback occurs.
 
 The index is deterministic versioned JSON, not pickle. It embeds source
 documents, sections, chunks, configurations, sparse term statistics, hashes,
@@ -975,7 +1066,7 @@ src/localml_scholar/
   nn/                     Layers, single/multi-head attention, FFN, decoder
   optim/                  SGD, momentum, and Adam
   training/               Transformer trainer, clipping, finite differences
-  retrieval/              Ingestion, exact chunks, TF-IDF/BM25, citations, CLI
+  retrieval/              Exact chunks, lexical/LSA/hybrid search, citations
   answering/              Evidence, answer methods, citations, validation, CLI
   optimizers.py           Milestone 1 compatibility SGD
   generation.py           Bigram and transformer autoregressive sampling
@@ -1004,6 +1095,7 @@ Mathematical details are in:
 - [tokenization and byte-pair encoding](docs/derivations/tokenization_and_bpe.md)
 - [document ingestion and lexical retrieval](docs/derivations/document_ingestion_and_lexical_retrieval.md)
 - [grounded answer generation](docs/derivations/grounded_answer_generation.md)
+- [semantic and hybrid retrieval](docs/derivations/semantic_and_hybrid_retrieval.md)
 - [retrieval CLI](docs/retrieval_cli.md)
 - [retrieval index format](docs/retrieval_index_format.md)
 - [answer CLI](docs/answering_cli.md)
@@ -1017,6 +1109,7 @@ Mathematical details are in:
 - [Milestone 6 tokenizer/corpus-readiness audit](docs/audits/milestone_6_tokenizer_corpus_readiness_audit.md)
 - [Milestone 7 retrieval-readiness audit](docs/audits/milestone_7_retrieval_readiness_audit.md)
 - [Milestone 8 grounded-generation-readiness audit](docs/audits/milestone_8_grounded_generation_readiness_audit.md)
+- [Milestone 9 semantic-retrieval-readiness audit](docs/audits/milestone_9_semantic_retrieval_readiness_audit.md)
 
 ## Limitations
 
@@ -1059,8 +1152,13 @@ Mathematical details are in:
 - Character chunking uses transparent paragraph, punctuation, whitespace, and
   hard-limit heuristics. It is sensitive to source boundaries.
 - Lexical retrieval cannot reliably bridge synonyms, paraphrases, equivalent
-  formulas, or terms absent from the query. There are no embeddings,
-  vector database, semantic reranker, stemming, or phrase model.
+  formulas, or terms absent from the query. LSA can sometimes bridge
+  distributional vocabulary but is linear, corpus-dependent, sensitive to
+  chunking, and weak for absent query terms, polysemy, or tiny corpora.
+- Dense SVD and exact semantic scanning are not appropriate for large
+  collections without profiling and a separately validated scalable design.
+- The feature reranker uses manually selected weights. It is transparent but
+  is not a learned relevance model or semantic entailment model.
 - The reference search scans every chunk and stores overlapping text in a
   human-inspectable JSON snapshot; it is not optimized for large collections.
 - Evidence sufficiency is a thresholded lexical heuristic and can answer weak
@@ -1078,8 +1176,9 @@ Mathematical details are in:
   claim of complete prompt-injection security.
 - Grounded prompts must fit the fixed learned context with generation
   allowance. Lowest-ranked evidence is removed before exact source truncation.
-- There is no external fact verification, semantic embedding, hybrid
-  retrieval, vector database, or neural reranker.
+- There is no external fact verification, neural embedding model, vector
+  database, approximate nearest-neighbor index, cross-encoder, or learned
+  neural reranker.
 - Generated bigram or tiny-transformer text should not be interpreted as
   meaningful general language.
 
@@ -1087,7 +1186,7 @@ Mathematical details are in:
 
 The next recommended milestone is:
 
-> Add semantic retrieval as a separately evaluated extension: implement or integrate a transparent local embedding baseline, compare it against BM25 on synonym and paraphrase queries, add hybrid retrieval and deterministic reranking, and preserve exact citations and grounded-answer validation.
+> Build paper-specific scholarly tooling: equation and notation extraction, reference linking, structured paper summaries, methodology and experiment extraction, cross-paper comparison, implementation checklists, and research-gap analysis while preserving exact citations.
 
 See [the full roadmap](docs/roadmap.md) and
 [the architecture](docs/architecture.md).

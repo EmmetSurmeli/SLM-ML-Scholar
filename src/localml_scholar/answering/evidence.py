@@ -6,11 +6,13 @@ import math
 import re
 from collections import Counter
 from collections.abc import Mapping
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Any
 
 from localml_scholar.answering.models import EvidenceItem, EvidenceSufficiency
 from localml_scholar.retrieval import (
+    HybridRetrievalConfig,
+    RerankingConfig,
     RetrievalIndex,
     SearchFilters,
     SearchResult,
@@ -62,7 +64,7 @@ def meaningful_query_terms(text: str) -> tuple[str, ...]:
 
 @dataclass(frozen=True)
 class EvidenceSelectionConfig:
-    """Validated lexical retrieval, selection, and sufficiency policy."""
+    """Validated retrieval, selection, and sufficiency policy."""
 
     retrieval_method: str = "bm25"
     retrieval_top_k: int = 8
@@ -77,10 +79,18 @@ class EvidenceSelectionConfig:
     minimum_query_term_coverage: float = 0.2
     minimum_unique_matched_terms: int = 1
     minimum_evidence_count: int = 1
+    hybrid_config: HybridRetrievalConfig = field(default_factory=HybridRetrievalConfig)
+    reranking_config: RerankingConfig = field(default_factory=RerankingConfig)
 
     def __post_init__(self) -> None:
-        if self.retrieval_method not in {"tfidf", "bm25"}:
-            raise ValueError("retrieval_method must be 'tfidf' or 'bm25'.")
+        if self.retrieval_method not in {
+            "tfidf",
+            "bm25",
+            "semantic",
+            "hybrid",
+            "hybrid_reranked",
+        }:
+            raise ValueError("Unknown retrieval_method.")
         for name in (
             "retrieval_top_k",
             "evidence_top_k",
@@ -120,9 +130,16 @@ class EvidenceSelectionConfig:
         for name in ("require_positive_score", "diversify_documents"):
             if not isinstance(getattr(self, name), bool):
                 raise TypeError(f"{name} must be boolean.")
+        if not isinstance(self.hybrid_config, HybridRetrievalConfig):
+            raise TypeError("hybrid_config must be HybridRetrievalConfig.")
+        if not isinstance(self.reranking_config, RerankingConfig):
+            raise TypeError("reranking_config must be RerankingConfig.")
 
     def to_dict(self) -> dict[str, Any]:
-        return dict(vars(self))
+        state = dict(vars(self))
+        state["hybrid_config"] = self.hybrid_config.to_dict()
+        state["reranking_config"] = self.reranking_config.to_dict()
+        return state
 
     @classmethod
     def from_dict(cls, state: Mapping[str, Any]) -> EvidenceSelectionConfig:
@@ -130,7 +147,14 @@ class EvidenceSelectionConfig:
             cls.__dataclass_fields__
         ):
             raise ValueError("Evidence selection configuration is malformed.")
-        return cls(**dict(state))
+        values = dict(state)
+        values["hybrid_config"] = HybridRetrievalConfig.from_dict(
+            values["hybrid_config"]
+        )
+        values["reranking_config"] = RerankingConfig.from_dict(
+            values["reranking_config"]
+        )
+        return cls(**values)
 
 
 @dataclass(frozen=True)
@@ -258,6 +282,7 @@ def _make_evidence(
         retrieval_score=result.score,
         retrieval_method=result.retrieval_method,
         matched_terms=result.matched_terms,
+        semantic_query_terms=result.semantic_query_terms,
         token_count=token_count,
         truncated=truncated,
         index_sha256=index.index_sha256,
@@ -282,11 +307,17 @@ def select_evidence(
         raise TypeError("config must be EvidenceSelectionConfig.")
     if tokenizer is not None and not isinstance(tokenizer, Tokenizer):
         raise TypeError("tokenizer must implement the Tokenizer interface.")
+    search_options: dict[str, Any] = {}
+    if resolved.retrieval_method in {"hybrid", "hybrid_reranked"}:
+        search_options["hybrid_config"] = resolved.hybrid_config
+    if resolved.retrieval_method == "hybrid_reranked":
+        search_options["reranking_config"] = resolved.reranking_config
     results = index.search(
         question,
         method=resolved.retrieval_method,
         top_k=resolved.retrieval_top_k,
         filters=filters,
+        **search_options,
     )
     content_query_terms = set(meaningful_query_terms(question))
     eligible = [
@@ -294,7 +325,10 @@ def select_evidence(
         for result in results
         if result.score >= resolved.minimum_score
         and (not resolved.require_positive_score or result.score > 0.0)
-        and bool(content_query_terms & set(result.matched_terms))
+        and bool(
+            content_query_terms
+            & (set(result.matched_terms) | set(result.semantic_query_terms))
+        )
     ]
     if resolved.diversify_documents:
         first_per_document: list[SearchResult] = []
@@ -376,7 +410,10 @@ def assess_evidence_sufficiency(
     matched = tuple(
         term
         for term in query_terms
-        if any(term in item.matched_terms for item in evidence)
+        if any(
+            term in set(item.matched_terms) | set(item.semantic_query_terms)
+            for item in evidence
+        )
     )
     unmatched = tuple(term for term in query_terms if term not in set(matched))
     coverage = 0.0 if not query_terms else len(matched) / len(query_terms)
@@ -440,6 +477,7 @@ def relabel_evidence(evidence: tuple[EvidenceItem, ...]) -> tuple[EvidenceItem, 
             retrieval_score=item.retrieval_score,
             retrieval_method=item.retrieval_method,
             matched_terms=item.matched_terms,
+            semantic_query_terms=item.semantic_query_terms,
             token_count=item.token_count,
             truncated=item.truncated,
             index_sha256=item.index_sha256,
@@ -507,6 +545,7 @@ def truncate_evidence_item(
         retrieval_score=item.retrieval_score,
         retrieval_method=item.retrieval_method,
         matched_terms=item.matched_terms,
+        semantic_query_terms=item.semantic_query_terms,
         token_count=int(tokenizer.encode(selected).size),
         truncated=True,
         index_sha256=item.index_sha256,

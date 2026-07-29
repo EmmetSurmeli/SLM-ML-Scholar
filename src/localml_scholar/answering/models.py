@@ -92,6 +92,7 @@ class EvidenceItem:
     retrieval_score: float
     retrieval_method: str
     matched_terms: tuple[str, ...]
+    semantic_query_terms: tuple[str, ...]
     token_count: int | None
     character_count: int
     truncated: bool
@@ -138,9 +139,16 @@ class EvidenceItem:
             raise TypeError("retrieval_score must be a real number.")
         if not math.isfinite(float(self.retrieval_score)) or self.retrieval_score < 0.0:
             raise ValueError("retrieval_score must be finite and non-negative.")
-        if self.retrieval_method not in {"tfidf", "bm25"}:
-            raise ValueError("retrieval_method must be 'tfidf' or 'bm25'.")
+        if self.retrieval_method not in {
+            "tfidf",
+            "bm25",
+            "semantic",
+            "hybrid",
+            "hybrid_reranked",
+        }:
+            raise ValueError("Unknown retrieval_method.")
         _string_tuple(self.matched_terms, "matched_terms")
+        _string_tuple(self.semantic_query_terms, "semantic_query_terms")
         if not isinstance(self.truncated, bool):
             raise TypeError("truncated must be boolean.")
         if self.selected_text_sha256 != sha256_text(self.selected_text):
@@ -188,6 +196,7 @@ class EvidenceItem:
         retrieval_score: float,
         retrieval_method: str,
         matched_terms: tuple[str, ...],
+        semantic_query_terms: tuple[str, ...],
         token_count: int | None,
         truncated: bool,
         index_sha256: str,
@@ -232,6 +241,7 @@ class EvidenceItem:
             retrieval_score=float(retrieval_score),
             retrieval_method=retrieval_method,
             matched_terms=matched_terms,
+            semantic_query_terms=semantic_query_terms,
             token_count=token_count,
             character_count=len(selected_text),
             truncated=truncated,
@@ -243,6 +253,7 @@ class EvidenceItem:
         state = dict(vars(self))
         state["heading_path"] = list(self.heading_path)
         state["matched_terms"] = list(self.matched_terms)
+        state["semantic_query_terms"] = list(self.semantic_query_terms)
         state["citation"] = self.citation.to_dict()
         return state
 
@@ -252,7 +263,7 @@ class EvidenceItem:
         if not isinstance(state, Mapping) or set(state) != expected:
             raise ValueError("Evidence item state keys are malformed.")
         values = dict(state)
-        for name in ("heading_path", "matched_terms"):
+        for name in ("heading_path", "matched_terms", "semantic_query_terms"):
             if not isinstance(values[name], list):
                 raise ValueError(f"Serialized {name} must be a list.")
             values[name] = tuple(values[name])

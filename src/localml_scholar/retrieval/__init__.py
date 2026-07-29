@@ -1,4 +1,4 @@
-"""Deterministic local document ingestion and lexical retrieval."""
+"""Deterministic local lexical, semantic, and hybrid retrieval."""
 
 from localml_scholar.retrieval.bm25 import BM25Config
 from localml_scholar.retrieval.chunking import (
@@ -12,6 +12,15 @@ from localml_scholar.retrieval.documents import (
     Document,
     PageText,
     Section,
+)
+from localml_scholar.retrieval.hybrid import (
+    HybridRetrievalConfig,
+    RerankingConfig,
+    fuse_rankings,
+    maximum_positive_normalization,
+    reranking_features,
+    source_range_overlap,
+    weighted_reranking_score,
 )
 from localml_scholar.retrieval.index import (
     IndexConfig,
@@ -30,11 +39,23 @@ from localml_scholar.retrieval.ingestion import (
 )
 from localml_scholar.retrieval.metrics import (
     RetrievalEvaluation,
+    average_precision,
     evaluate_rankings,
     hit_rate_at_k,
+    mean_relevant_rank,
+    ndcg_at_k,
     precision_at_k,
     recall_at_k,
     reciprocal_rank,
+)
+from localml_scholar.retrieval.semantic import (
+    SemanticIndex,
+    SemanticQueryProjection,
+    SemanticRetrievalConfig,
+    build_tfidf_matrix,
+    canonicalize_svd_signs,
+    fit_lsa,
+    vocabulary_sha256,
 )
 from localml_scholar.retrieval.text import (
     LexicalTerm,
@@ -45,11 +66,14 @@ from localml_scholar.retrieval.text import (
 
 __all__ = [
     "BM25Config",
+    "average_precision",
     "Chunk",
     "ChunkingConfig",
     "Citation",
     "Document",
     "evaluate_rankings",
+    "fit_lsa",
+    "fuse_rankings",
     "highlight_matches",
     "hit_rate_at_k",
     "IndexConfig",
@@ -67,11 +91,25 @@ __all__ = [
     "reciprocal_rank",
     "RetrievalEvaluation",
     "RetrievalIndex",
+    "HybridRetrievalConfig",
+    "maximum_positive_normalization",
+    "mean_relevant_rank",
+    "ndcg_at_k",
+    "RerankingConfig",
+    "reranking_features",
     "SearchFilters",
     "SearchQuery",
     "SearchResult",
+    "SemanticIndex",
+    "SemanticQueryProjection",
+    "SemanticRetrievalConfig",
     "Section",
     "tokenize_lexically",
+    "source_range_overlap",
+    "weighted_reranking_score",
+    "build_tfidf_matrix",
+    "canonicalize_svd_signs",
+    "vocabulary_sha256",
     "validate_chunk_coverage",
     "chunk_document",
 ]

@@ -19,7 +19,12 @@ from localml_scholar.answering.serialization import (
     answer_artifact_state,
     save_grounded_answer,
 )
-from localml_scholar.retrieval import RetrievalIndex, SearchFilters
+from localml_scholar.retrieval import (
+    HybridRetrievalConfig,
+    RerankingConfig,
+    RetrievalIndex,
+    SearchFilters,
+)
 
 _CLI_METHODS = {
     "top-passage": "top_passage",
@@ -74,13 +79,32 @@ def _generative_answerer(
 def run_answer(args: argparse.Namespace) -> GroundedAnswer:
     """Load explicit local artifacts and execute one answer request."""
     index = RetrievalIndex.load(args.index)
+    retriever = (
+        "hybrid_reranked"
+        if args.retriever == "hybrid" and args.rerank
+        else args.retriever
+    )
+    if args.rerank and args.retriever != "hybrid":
+        raise ValueError("--rerank requires --retriever hybrid.")
     pipeline = GroundedAnswerPipeline(
         index,
         evidence_config=EvidenceSelectionConfig(
-            retrieval_method=args.retriever,
+            retrieval_method=retriever,
             retrieval_top_k=args.top_k,
             evidence_top_k=args.evidence_top_k,
             maximum_evidence_characters=args.maximum_evidence_characters,
+            hybrid_config=HybridRetrievalConfig(
+                lexical_method=args.lexical_method,
+                fusion=args.fusion,
+                alpha=args.alpha,
+                rrf_rank_constant=args.rrf_rank_constant,
+                lexical_candidate_count=args.lexical_candidate_count,
+                semantic_candidate_count=args.semantic_candidate_count,
+            ),
+            reranking_config=RerankingConfig(
+                candidate_count=args.reranking_candidate_count,
+                redundancy_threshold=args.redundancy_threshold,
+            ),
         ),
         generative_answerer=_generative_answerer(args),
     )
@@ -113,6 +137,7 @@ def _human_readable(
     lines = [
         f"question: {answer.question}",
         f"method: {answer.method}",
+        f"retriever: {answer.metadata['retrieval_method']}",
         f"status: {status}",
         "",
         "answer:",
@@ -135,6 +160,23 @@ def _human_readable(
         )
         if verbose:
             lines.extend(["    passage:", item.selected_text])
+            retrieval_result = next(
+                (
+                    result
+                    for result in answer.metadata["retrieval_results"]
+                    if result["chunk_id"] == item.chunk_id
+                ),
+                None,
+            )
+            if retrieval_result is not None:
+                lines.append(
+                    "    scoring: "
+                    + json.dumps(
+                        retrieval_result["scoring_details"],
+                        ensure_ascii=False,
+                        sort_keys=True,
+                    )
+                )
     if not answer.evidence:
         lines.append("  (none)")
     if answer.abstention_reason is not None:
@@ -162,9 +204,18 @@ def parse_args(arguments: Sequence[str] | None = None) -> argparse.Namespace:
     )
     parser.add_argument(
         "--retriever",
-        choices=("bm25", "tfidf"),
+        choices=("bm25", "tfidf", "semantic", "hybrid", "hybrid_reranked"),
         default="bm25",
     )
+    parser.add_argument("--lexical-method", choices=("bm25", "tfidf"), default="bm25")
+    parser.add_argument("--fusion", choices=("weighted", "rrf"), default="rrf")
+    parser.add_argument("--alpha", type=float, default=0.5)
+    parser.add_argument("--rrf-rank-constant", type=int, default=60)
+    parser.add_argument("--lexical-candidate-count", type=int, default=20)
+    parser.add_argument("--semantic-candidate-count", type=int, default=20)
+    parser.add_argument("--rerank", action="store_true")
+    parser.add_argument("--reranking-candidate-count", type=int, default=20)
+    parser.add_argument("--redundancy-threshold", type=float, default=0.8)
     parser.add_argument("--top-k", type=int, default=8)
     parser.add_argument("--evidence-top-k", type=int, default=4)
     parser.add_argument("--maximum-evidence-characters", type=int, default=4000)

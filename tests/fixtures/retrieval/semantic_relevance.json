@@ -1,0 +1,124 @@
+[
+  {
+    "category": "lexical_overlap",
+    "grades": {
+      "chk_2239a89c1d021f7da83e1241": 1,
+      "chk_e945189d90b2b8ab6375a9ae": 2
+    },
+    "query": "how does the learning rate control a parameter update",
+    "query_id": "direct_learning_rate",
+    "split": "development"
+  },
+  {
+    "category": "synonym",
+    "grades": {
+      "chk_2239a89c1d021f7da83e1241": 2,
+      "chk_e945189d90b2b8ab6375a9ae": 2
+    },
+    "query": "what determines the optimization step size",
+    "query_id": "synonym_step_size",
+    "split": "evaluation"
+  },
+  {
+    "category": "paraphrase",
+    "grades": {
+      "chk_a0aa8d2693d9a9e6e54dba7f": 2,
+      "chk_704ff0e2d6f358db0b6518e1": 1
+    },
+    "query": "why can appended suffix tokens not change an earlier prediction",
+    "query_id": "paraphrase_suffix_independence",
+    "split": "evaluation"
+  },
+  {
+    "category": "acronym",
+    "grades": {
+      "chk_f4814b8a3f01cb15309ebe48": 2
+    },
+    "query": "what does RRF do",
+    "query_id": "acronym_rrf",
+    "split": "development"
+  },
+  {
+    "category": "code_identifier",
+    "grades": {
+      "chk_a9a965006f4d441183cb6293": 2
+    },
+    "query": "which setting is used by clip_grad_norm",
+    "query_id": "identifier_gradient_clip",
+    "split": "evaluation"
+  },
+  {
+    "category": "notation",
+    "grades": {
+      "chk_5195a790654b913ae1dfab16": 2
+    },
+    "query": "why add epsilon below the square root of variance",
+    "query_id": "notation_layer_norm",
+    "split": "evaluation"
+  },
+  {
+    "category": "heading",
+    "grades": {
+      "chk_a0aa8d2693d9a9e6e54dba7f": 2
+    },
+    "query": "explain the triangular restriction",
+    "query_id": "heading_triangular",
+    "split": "development"
+  },
+  {
+    "category": "rare_term",
+    "grades": {
+      "chk_dc15e9eca1e5b2005c059897": 2
+    },
+    "query": "why correct beta dependent moving averages",
+    "query_id": "rare_bias_correction",
+    "split": "evaluation"
+  },
+  {
+    "category": "broad_concept",
+    "grades": {
+      "chk_dcba0d3667c75b714d8a4201": 2
+    },
+    "query": "what are the limits of latent retrieval",
+    "query_id": "broad_lsa_limits",
+    "split": "development"
+  },
+  {
+    "category": "misleading_overlap",
+    "grades": {
+      "chk_704ff0e2d6f358db0b6518e1": 1,
+      "chk_a0aa8d2693d9a9e6e54dba7f": 2
+    },
+    "query": "how does a decoder stop later positions influencing information flow",
+    "query_id": "misleading_future_overlap",
+    "split": "evaluation"
+  },
+  {
+    "category": "multi_source",
+    "grades": {
+      "chk_a0aa8d2693d9a9e6e54dba7f": 1,
+      "chk_e945189d90b2b8ab6375a9ae": 1
+    },
+    "query": "identify both the decoder safeguard and the optimization control",
+    "query_id": "multi_source_controls",
+    "split": "development"
+  },
+  {
+    "category": "numerical",
+    "grades": {
+      "chk_e945189d90b2b8ab6375a9ae": 2
+    },
+    "query": "what changes between learning rate 0.01 and 0.1",
+    "query_id": "numerical_learning_rate",
+    "split": "evaluation"
+  },
+  {
+    "category": "negation",
+    "grades": {
+      "chk_dcba0d3667c75b714d8a4201": 2
+    },
+    "query": "which passage says similarity does not prove relevance",
+    "query_id": "negation_similarity_proof",
+    "split": "evaluation"
+  }
+]

@@ -218,16 +218,32 @@ useful generative checkpoint is assumed.
 
 ## Milestone 10 — Semantic retrieval extension
 
-Next recommended milestone:
+Status: complete and verified.
 
-> Add semantic retrieval as a separately evaluated extension: implement or integrate a transparent local embedding baseline, compare it against BM25 on synonym and paraphrase queries, add hybrid retrieval and deterministic reranking, and preserve exact citations and grounded-answer validation.
+- deterministic TF-IDF term-chunk matrices and NumPy truncated SVD
+- explicit effective-rank validation and SVD sign canonicalization
+- normalized chunk embeddings and exact full-corpus semantic cosine
+- query projection with known/OOV term explanations
+- maximum-positive-score weighted fusion and reciprocal rank fusion
+- bounded lexical/semantic candidate union with component ranks and scores
+- transparent feature-based reranking and source-range redundancy penalties
+- version 2 semantic index state, hashes, atomic persistence, and reload
+- explicit enrichment of recognized 0.8.0/0.9.0 lexical-only indexes
+- MAP, graded nDCG, mean relevant rank, no-result, and category metrics
+- project-authored synonym, paraphrase, notation, numerical, negation, code,
+  acronym, rare-term, broad, multi-source, and misleading-overlap fixtures
+- retrieval ablation, descriptive sensitivity, semantic inspection, and
+  grounded-answer regression experiments
 
-Keep BM25 as an independently tested baseline. Record model provenance,
-licensing, local resource costs, deterministic behavior, and retrieval
-ablations. Do not let vector similarity replace exact source passage and
-citation validation.
+LSA is a linear corpus-dependent baseline, not a modern neural embedding
+model. Similarity does not prove relevance or factual support. BM25 and TF-IDF
+remain independently available.
 
-## Milestone 11 — Correctness reference
+The next recommended milestone is:
+
+> Build paper-specific scholarly tooling: equation and notation extraction, reference linking, structured paper summaries, methodology and experiment extraction, cross-paper comparison, implementation checklists, and research-gap analysis while preserving exact citations.
+
+## Deferred — Correctness reference
 
 Only after the independent implementation works:
 
@@ -240,7 +256,7 @@ Only after the independent implementation works:
 
 The reference must not become the source of the manual implementation.
 
-## Milestone 12 — ML-paper specialization
+## Milestone 11 — Paper-specific scholarly tooling
 
 Build a legally usable, versioned training and evaluation corpus from:
 
@@ -266,7 +282,7 @@ Target capabilities:
 - limitation analysis
 - reproduction planning
 
-## Milestone 13 — Evaluation
+## Milestone 12 — Evaluation
 
 Create a manually reviewed benchmark with:
 
@@ -291,7 +307,7 @@ Compare:
 Factuality evaluation must point to exact page-level evidence in the supplied
 paper. Record annotator instructions and disagreement.
 
-## Milestone 14 — Local application
+## Milestone 13 — Local application
 
 Build a lightweight local interface for:
 
@@ -306,7 +322,7 @@ Build a lightweight local interface for:
 
 Define the local privacy boundary and storage paths in the interface.
 
-## Milestone 15 — Performance optimization
+## Milestone 14 — Performance optimization
 
 Profile before optimizing. Potential targets include:
 

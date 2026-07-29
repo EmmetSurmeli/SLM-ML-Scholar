@@ -95,8 +95,12 @@ class GroundedAnswerPipeline:
                 {
                     "rank": result.rank,
                     "score": result.score,
+                    "retrieval_method": result.retrieval_method,
                     "chunk_id": result.chunk_id,
                     "document_id": result.document_id,
+                    "matched_terms": list(result.matched_terms),
+                    "semantic_query_terms": list(result.semantic_query_terms),
+                    "scoring_details": result.scoring_details,
                 }
                 for result in selection.retrieval_results
             ],

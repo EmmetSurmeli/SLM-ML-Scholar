@@ -125,8 +125,10 @@ deterministic section-local Chunk slices with validated coverage/overlap
     ↓
 retrieval-only Unicode-aware lexical terms and source spans
     ↓
-immutable TF-IDF/BM25 snapshot
-    ↓
+immutable lexical snapshot
+    ↓ optional deterministic TF-IDF LSA enrichment
+exact semantic cosine + BM25/semantic fusion
+    ↓ optional transparent feature reranking
 explicit query filters and deterministic ranking
     ↓
 exact SearchResult passage + structured Citation + scoring contributions
@@ -146,17 +148,20 @@ do not create artificial searchable text. The adapter does not parse PDF bytes,
 perform OCR, infer layout, or pretend supplied extraction is exact.
 
 `RetrievalIndex` is an immutable snapshot. Build order, vocabulary, sparse
-frequency maps, scores, tie breaks, and citations are deterministic. Its
-versioned JSON includes enough source/chunk text and metadata to search without
-the original files. Atomic saving and transactional loading validate the
-complete hash and independently rebuild all statistics before accepting state.
-Changes trigger a full rebuild and can be explained as source, content,
-chunking, lexical, or BM25 configuration differences.
+frequency maps, scores, tie breaks, and citations are deterministic. Version
+2 optionally stores TF-IDF LSA factors, canonical signs, chunk embeddings, and
+numerical diagnostics aligned to the same chunk IDs. Atomic saving and
+transactional loading validate hashes and independently rebuild lexical and
+semantic statistics before accepting state. Source changes trigger a full
+rebuild; semantic enrichment creates a separate snapshot without re-ingestion.
 
-BM25 is the default lexical method; TF-IDF cosine is a separately implemented
-baseline. Both return only positive-score passages and transparent per-term
-evidence. Neither invokes answer generation. There are no embeddings, vector
-database, semantic reranker, or external retrieval framework.
+BM25 remains the default lexical method; TF-IDF cosine remains a separately
+implemented baseline. LSA adds local distributional coordinates, exact cosine,
+maximum-normalized weighted fusion, and reciprocal rank fusion. The optional
+reranker exposes every manually weighted feature and source-range redundancy
+penalty. No external embedding, vector database, approximate search, neural
+cross-encoder, or retrieval framework is used. LSA similarity is not evidence
+of truth.
 
 ## Current grounded-answer architecture
 
@@ -165,7 +170,7 @@ and model responsibilities:
 
 ```text
 question + immutable RetrievalIndex
-        ↓ explicit BM25 or TF-IDF search
+        ↓ explicit lexical, semantic, hybrid, or reranked search
 positive meaningful-term SearchResults
         ↓ range overlap, diversity, and character budget
 ordered exact EvidenceItems C1...Cn
@@ -186,8 +191,8 @@ versioned atomic GroundedAnswer JSON
 
 `EvidenceItem` binds an answer-local label to the exact selected source range,
 structured citation, selected-text hash, and immutable index hash. Selection
-cannot retrieve outside the returned lexical result set. Overlap suppression
-uses source offsets rather than vector similarity.
+cannot retrieve outside the returned result set. Overlap suppression uses
+source offsets rather than vector similarity.
 
 The sufficiency gate reports evidence count, top score, meaningful matched
 terms, query-term coverage, source count, and threshold reasons. It controls
@@ -336,7 +341,7 @@ every decoder block, and the vocabulary head. `number_of_heads` is part of the
 complete checkpointed configuration. The public state loader validates every
 key, shape, dtype, and finite value before changing any parameter.
 
-The 0.9.0 package retains the 0.7.0 model schema. Its loaders recognize 0.5.0
+The 1.0.0 package retains the 0.7.0 model schema. Its loaders recognize 0.5.0
 and 0.6.0 model checkpoints plus 0.5.1 and 0.6.0 full training checkpoints.
 Single-head legacy configuration migration still adds `number_of_heads=1` in
 memory. Legacy character vocabularies migrate into the unified tokenizer
@@ -488,6 +493,12 @@ explicit project-transformer checkpoint can instead receive a tokenizer-fitted
 grounded prompt, but its output is retained and validated rather than assumed
 correct. Insufficient evidence produces no answer attempt; invalid generation
 is rejected or explicitly replaced by an extractive fallback.
+
+Milestone 10 enriches the same immutable chunk identities with TF-IDF LSA,
+then adds exact cosine, explicit score/rank fusion, and deterministic
+feature-based reranking. Retrieval may change the selected chunk set, but
+evidence creation and answer validation still bind only to original source
+ranges. The semantic layer never reconstructs citation metadata from vectors.
 
 ## Future module constraints
 

@@ -6,7 +6,7 @@ Grounded answers use deterministic, UTF-8, non-pickle JSON. The current
 ```json
 {
   "answer_format_version": 1,
-  "package_version": "0.9.0",
+  "package_version": "1.0.0",
   "artifact_type": "grounded_answer",
   "answer": {}
 }
@@ -23,8 +23,8 @@ The nested answer stores:
 - citation/support validation;
 - index, corpus, evidence, tokenizer, and checkpoint identities where
   applicable;
-- complete retrieval, selection, acceptance, context, and generation
-  configuration metadata.
+- complete retrieval, lexical/semantic component, hybrid fusion, reranking,
+  selection, acceptance, context, and generation configuration metadata.
 
 `EvidenceItem.selected_text_sha256` protects the included source text.
 `AnswerValidation.evidence_hash` binds the ordered labels, evidence IDs, chunk
