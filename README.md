@@ -21,9 +21,9 @@ framework or automatic-differentiation system. This is an educational and
 engineering constraint, not a claim that a from-scratch model is automatically
 faster or more capable.
 
-## Current status: Milestone 10
+## Current status: Milestone 11.5
 
-The package version is `1.0.0`.
+The package version is `1.1.1`.
 
 Milestone 1 is complete and independently audited. Its character-level bigram
 learns a \(V\times V\) table of next-character logits and conditions only on
@@ -243,6 +243,62 @@ prove relevance, truth, or entailment. Exact citations still come only from
 the original immutable chunks. No external embedding API, model download,
 vector database, approximate index, or neural reranker is used.
 
+Milestone 11 adds deterministic paper-specific scholarly analysis:
+
+- canonical paper identity and source-verifiable metadata
+- section-role classification that retains ambiguity and unknown sections
+- text-only equation detection with exact source ranges
+- source-linked notation glossaries, conflicting definitions, and unresolved
+  symbols
+- explicit assumption, claim, method, procedure, dataset, metric, baseline,
+  hyperparameter, result, ablation, limitation, and reference extraction
+- conservative Markdown and delimiter-table parsing
+- equation-aware reranking layered over unchanged retrieval methods
+- cited structured summaries and reproduction checklists
+- explicit missing, ambiguous, conflicting, and document-risk states
+- cross-paper comparison with incompatible-result warnings
+- research-gap worksheets that distinguish source statements from system
+  suggestions and explicitly do not establish novelty
+- versioned atomic scholarly artifacts, Markdown renderers, a CLI, authored
+  fixtures, and extraction/checklist/comparison/gap experiments
+
+Equations are detected from available extracted text only. There is no OCR,
+visual PDF equation recovery, table-layout reconstruction, or figure
+interpretation. Deterministic extraction is the trusted baseline; the custom
+transformer remains optional and is not constructed by the scholarly pipeline.
+Every substantive structured value requires exact source evidence, but
+provenance does not prove semantic correctness.
+
+Milestone 11.5 adds automated real-paper evaluation and error analysis:
+
+- versioned, source/index-bound benchmark questions with deterministic IDs
+- explicit answerability, paper sufficiency, expected/forbidden sections,
+  graded evidence, required concepts, prohibited claims, and review state
+- generic candidate generation plus a 33-question untrusted
+  *Attention Is All You Need* starter
+- a hard approval boundary: proposed questions never enter official metrics
+- separate retrieval, sufficiency, answer relevance, completeness, required
+  concepts, citations, abstention, and audience grades
+- question-aware boilerplate and section diagnostics
+- one cited `StructuredAnswerTarget` rendered deterministically for
+  `beginner`, `undergraduate`, and `researcher` audiences
+- multi-label failures, cautious root-cause attribution, selective human
+  review, and deterministic pass sampling
+- question-level regression comparison across recorded configurations and
+  package versions
+- source-validated export of human-approved corrections for possible future
+  instruction training
+- atomic benchmark, run, queue, review, comparison, and correction artifacts
+- batch CLI, Markdown reports, four experiments, and authored integration tests
+
+Grounded does **not** mean correct. Citation syntax, existence, source location,
+support, relevance, and completeness are distinct measurements. Retrieval and
+answering are graded separately. The evaluator uses no external judge model,
+LLM API, web search, external embedding, or hosted fact checker. Its
+transparent heuristics expose likely problems; they do not prove semantic
+correctness. Human approval remains the trusted boundary for gold annotations
+and future correction data.
+
 The model remains tiny, educational, CPU-oriented, and unoptimized. Every
 neural-network gradient is manually implemented; there is no PyTorch, autograd,
 or external training framework.
@@ -253,13 +309,48 @@ bigram cannot understand a paper, explain an equation, retrieve evidence, or
 maintain context beyond one character. The MLP is a synthetic integration
 fixture; the attention head and decoder block are numerical and causality
 fixtures. The trained transformer has only been evaluated on tiny deterministic
-character fixtures. Milestones 9–10 can produce cited extractive answers,
+character fixtures. Milestones 9–11 can produce cited extractive answers,
 select evidence with lexical/LSA/hybrid retrieval, and validate output from an
 explicit local checkpoint, but the system does not understand
 passages, prove truth, or supply a useful pretrained model. These experiments
 establish implementation behavior, not general language understanding,
 paper-assistance capability, or retrieval quality. No external LLM, API,
 embedding model, vector database, or web search is used.
+
+## Local paper Review Lab
+
+A narrow human-in-the-loop interface is now available ahead of the broader
+application milestone. It supports:
+
+- local PDF, Markdown, and UTF-8 text submission
+- an indexed paper library with exact extracted source
+- deterministic scholarly summaries, notation, methods, experiments,
+  limitations, and reproduction-checklist views
+- evidence-scoped questions using the trusted cited extractive answer path
+- visible source passages and page/line citations
+- audience-specific review for PhD/professor, undergraduate, and high-school/
+  beginner readers
+- structured verdicts, pedagogical issue labels, review notes, and corrected
+  answers
+- repository-local feedback snapshots that Codex can inspect in a later task
+
+The Review Lab binds only to `127.0.0.1`; browser assets, papers, indexes,
+interactions, and reviews stay on the machine. Feedback is **not automatic
+training**. It is saved as a review queue so proposed changes can be checked
+against paper evidence and applied deliberately.
+
+Install the optional local PDF adapter and launch from the repository root:
+
+```bash
+python3 -m pip install -e ".[app,dev]"
+localml-scholar-review
+```
+
+Open `http://127.0.0.1:8765`. Uploaded files are limited to 30 MiB.
+Image-only/scanned PDFs require OCR before ingestion. PDF extraction remains
+text-only and cannot interpret figures, visual equations, or complex layout.
+See [the local review application guide](docs/local_review_app.md) for storage,
+privacy, workflow, and feedback semantics.
 
 ## Installation
 
@@ -272,6 +363,8 @@ python3 -m pip install -e ".[dev]"
 ```
 
 The runtime dependency is NumPy. Pytest and Ruff are development dependencies.
+The optional `app` extra adds only `pypdf` for local PDF text extraction; the
+web server and interface use the Python standard library.
 The model package does not use PyTorch, TensorFlow, JAX, Keras, Hugging Face,
 autograd libraries, pretrained APIs, or external tokenizers.
 
@@ -318,11 +411,27 @@ rank truncation, query projection and OOV behavior, exact semantic cosine,
 fusion endpoints and RRF arithmetic, reranking features and redundancy,
 legacy enrichment, semantic serialization, MAP/nDCG/category metrics, CLIs,
 answer regression, and deterministic experiment artifacts.
+Milestone 11 covers exact source citations, metadata priority, section-role
+classification, text-only equations, notation conflicts, structured scholarly
+field extraction, deterministic reference linking, table/procedure parsing,
+section filtering, cited summaries, reproduction checklists, comparison,
+research-gap worksheets, artifact integrity, and fixture-measured extraction
+behavior. Review Lab tests cover repository-local uploads, paper replacement,
+page-aware PDF adapter integration, deterministic analysis, cited questions,
+audience-level round trips, exact interaction snapshots, feedback validation,
+loopback-only binding, and the complete HTTP workflow.
+Milestone 11.5 covers benchmark invariants, stale evidence/source rejection,
+approval transitions, graded retrieval, context-aware boilerplate, answer
+relevance, concept aliases and support, prohibited claims, sufficiency,
+citation-valid/relevance disagreement, deterministic audience rendering,
+multi-label failures, selective review, correction export, aggregate/grouped
+metrics, resumption, regression comparison, CLI workflows, the unapproved
+Attention-paper starter, and refusal to fabricate a real-paper run.
 
 ### Verified implementation
 
 The following commands were executed successfully from the repository root on
-2026-07-24 with Python 3.13.5, NumPy 2.4.3, pytest 9.1.1, and Ruff 0.15.18:
+2026-07-28 with Python 3.13.5, NumPy 2.4.3, pytest 9.1.1, and Ruff 0.15.18:
 
 ```bash
 python3 -m ruff format .
@@ -330,6 +439,9 @@ python3 -m ruff check .
 python3 -m ruff format --check .
 git diff --check
 python3 -m pytest -q
+PYTHONPATH=src python3 -m pytest -q \
+  tests/test_review_app_service.py tests/test_review_app_server.py
+PYTHONPATH=src python3 -m localml_scholar.review_app.server --help
 python3 experiments/train_bigram.py --config configs/bigram_small.json
 python3 experiments/train_mlp_xor.py
 python3 experiments/inspect_single_head_attention.py
@@ -359,6 +471,18 @@ python3 experiments/inspect_semantic_retrieval.py \
   --output-directory outputs/m10_semantic_inspection
 python3 experiments/evaluate_grounded_retrievers.py \
   --output-directory outputs/m10_grounded_retrievers
+python3 experiments/evaluate_scholarly_extraction.py
+python3 experiments/evaluate_reproduction_checklists.py
+python3 experiments/evaluate_paper_comparison.py
+python3 experiments/evaluate_research_gap_candidates.py
+python3 experiments/inspect_scholarly_analysis.py
+PYTHONPATH=src python3 -m localml_scholar.scholarly.cli inspect \
+  --index outputs/scholarly_inspection/fixture_index.json \
+  --document-id doc_81c983dd7a9fc1a8a7c4caa6 --json
+PYTHONPATH=src python3 -m localml_scholar.scholarly.cli equations \
+  --index outputs/scholarly_inspection/fixture_index.json \
+  --document-id doc_81c983dd7a9fc1a8a7c4caa6 \
+  --section-role appendix --json
 PYTHONPATH=src python3 -m localml_scholar.answering.cli \
   --index outputs/m9_extractive_evaluation/fixture_index.json \
   --question "How does causal masking prevent leakage?" \
@@ -429,7 +553,10 @@ PYTHONPATH=src python3 -c \
 ```
 
 Ruff 0.15.18 reported no lint or formatting errors, `git diff --check` was
-clean, and pytest 9.1.1 reported `571 passed in 3.31s`.
+clean, and pytest 9.1.1 reported `630 passed in 19.59s`. The Review Lab's 17
+tests include all three audience-level persistence paths, a real one-page PDF
+extraction fixture, and localhost HTTP integration; they add no neural-network
+or cloud dependency.
 The 300-step fallback-corpus smoke run used 2,094 training examples, 232
 validation examples, a 23-character vocabulary, and 529 parameters. Its best
 sampled validation loss was `1.5488034950125846` (perplexity
@@ -441,6 +568,49 @@ The 42-parameter XOR MLP reduced mean cross-entropy from
 steps and predicted `[0, 1, 1, 0]`. Its reloaded checkpoint reproduced logits
 bit-for-bit. This demonstrates correctness on four deterministic synthetic
 examples only.
+
+Milestone 11.5 was re-verified on 2026-07-29 with:
+
+```bash
+python3 -m ruff check .
+python3 -m ruff format --check .
+git diff --check
+python3 -m pytest -q
+PYTHONPATH=src python3 -m localml_scholar.evaluation.cli --help
+python3 experiments/evaluate_real_paper_benchmark.py
+python3 experiments/evaluate_real_paper_benchmark.py \
+  --benchmark outputs/m11_5_evaluation_smoke/approved_benchmark.json \
+  --index outputs/m11_5_evaluation_smoke/index.json \
+  --method extractive --retriever bm25 --top-k 5 \
+  --output-directory outputs/m11_5_real_paper_experiment_smoke
+python3 experiments/compare_retrieval_answer_configs.py \
+  --benchmark outputs/m11_5_config_comparison_smoke/benchmark.json \
+  --index outputs/m11_5_config_comparison_smoke/index.json --top-k 5 \
+  --output-directory outputs/m11_5_config_comparison_smoke/runs
+python3 experiments/analyze_failure_taxonomy.py \
+  --run outputs/m11_5_evaluation_smoke/evaluation_run.json \
+  --output outputs/m11_5_evaluation_smoke/failure_analysis.json
+python3 experiments/export_grounded_corrections.py \
+  --benchmark outputs/m11_5_evaluation_smoke/approved_benchmark.json \
+  --index outputs/m11_5_evaluation_smoke/index.json \
+  --reviews outputs/m11_5_evaluation_smoke/human_reviews.json \
+  --output outputs/m11_5_evaluation_smoke/corrections.json
+```
+
+Ruff and `git diff --check` were clean; pytest reported
+`686 passed in 7.73s`, including 55 focused Milestone 11.5 evaluation tests
+plus canonical/legacy audience persistence coverage. The authored
+one-question end-to-end smoke recorded Recall@1/3/5 and citation
+validity/support/relevance/coverage of `1.0`, answer relevance `0.825`, and
+required-concept recall `0.5`. It correctly surfaced
+`retrieval_wrong_section` and `required_concept_missing` instead of hiding
+them behind the perfect citation scores. The review queue contained that
+failure, one cited human correction exported successfully, all 33
+Attention-paper starters remained proposed, and eight controlled
+retriever/answer-method runs completed. Invoking the real-paper experiment
+without a benchmark/index exited with status 2 and created no fabricated
+result. These are authored-fixture implementation checks, not real-paper
+quality or semantic-correctness claims.
 
 The 55-parameter deterministic attention inspection reported exact tensor
 shapes, scaled scores, the causal mask, probabilities, synthetic loss, and
@@ -574,6 +744,21 @@ and reranked hybrid; citation recall was `0.95` for semantic/hybrid and `1.0`
 for BM25/reranked hybrid. No generative retrieval comparison was fabricated:
 that experiment is explicitly recorded as not run without a supplied
 checkpoint.
+
+The Milestone 11 fixture contains 3 short project-authored technical papers.
+All authored metadata fields, selected section roles, equation counts/numbers,
+symbols, selected definitions, unresolved symbols, dataset/metric/
+hyperparameter/method fields, experiment groupings, result values, reference
+titles/links, and authored count judgments matched exactly. Citation coverage
+was `1.0` for all three analyses. All four reproduction-checklist status sets
+and every expected risk flag matched; found-field counts were 11, 5, and 17.
+The controlled two-paper comparison marked 3 dimensions incomparable, retained
+citation coverage `1.0`, and produced zero superiority claims. The gap
+worksheet produced 9 direct and 1 system-inferred candidates, every candidate
+had a cited basis and novelty caution, and unsupported novelty claims were
+zero. The inspection artifact contained 4 equation blocks and 11 notation
+entries and reloaded consistently. These exact results measure only the
+authored regression fixtures; they do not estimate accuracy on real papers.
 
 ## Document ingestion and local retrieval
 
@@ -1056,6 +1241,12 @@ docs/
   retrieval_index_format.md Versioned immutable JSON schema
   answering_cli.md       Cited extractive/generative answer commands
   answer_artifact_format.md Versioned grounded-answer JSON schema
+  scholarly_cli.md       Paper analysis and artifact commands
+  scholarly_artifact_format.md Versioned analysis JSON schema
+  evaluation_cli.md      Candidate, run, report, queue, compare commands
+  evaluation_benchmark_format.md Approved gold benchmark JSON contract
+  evaluation_report_format.md Machine/Markdown report semantics
+  corrected_answer_dataset.md Human-approved correction export rules
   audits/                 Evidence-backed milestone audits
   derivations/           Math connected to source functions
 experiments/             Training, inspections, and controlled comparisons
@@ -1068,6 +1259,9 @@ src/localml_scholar/
   training/               Transformer trainer, clipping, finite differences
   retrieval/              Exact chunks, lexical/LSA/hybrid search, citations
   answering/              Evidence, answer methods, citations, validation, CLI
+  scholarly/              Cited paper extraction, artifacts, comparison, CLI
+  evaluation/             Gold benchmarks, graders, reports, review, CLI
+  review_app/             Loopback paper/question/feedback interface
   optimizers.py           Milestone 1 compatibility SGD
   generation.py           Bigram and transformer autoregressive sampling
   serialization.py        Atomic NPZ and text persistence
@@ -1096,10 +1290,18 @@ Mathematical details are in:
 - [document ingestion and lexical retrieval](docs/derivations/document_ingestion_and_lexical_retrieval.md)
 - [grounded answer generation](docs/derivations/grounded_answer_generation.md)
 - [semantic and hybrid retrieval](docs/derivations/semantic_and_hybrid_retrieval.md)
+- [paper-specific scholarly analysis](docs/derivations/paper_specific_scholarly_analysis.md)
+- [real-paper evaluation and error analysis](docs/derivations/real_paper_evaluation_and_error_analysis.md)
 - [retrieval CLI](docs/retrieval_cli.md)
 - [retrieval index format](docs/retrieval_index_format.md)
 - [answer CLI](docs/answering_cli.md)
 - [answer artifact format](docs/answer_artifact_format.md)
+- [scholarly CLI](docs/scholarly_cli.md)
+- [scholarly artifact format](docs/scholarly_artifact_format.md)
+- [evaluation CLI](docs/evaluation_cli.md)
+- [evaluation benchmark format](docs/evaluation_benchmark_format.md)
+- [evaluation report format](docs/evaluation_report_format.md)
+- [corrected-answer dataset](docs/corrected_answer_dataset.md)
 - [Milestone 1 audit](docs/audits/milestone_1_audit.md)
 - [Milestone 2 attention-readiness audit](docs/audits/milestone_2_attention_readiness_audit.md)
 - [Milestone 3 decoder-block readiness audit](docs/audits/milestone_3_decoder_block_readiness_audit.md)
@@ -1110,6 +1312,8 @@ Mathematical details are in:
 - [Milestone 7 retrieval-readiness audit](docs/audits/milestone_7_retrieval_readiness_audit.md)
 - [Milestone 8 grounded-generation-readiness audit](docs/audits/milestone_8_grounded_generation_readiness_audit.md)
 - [Milestone 9 semantic-retrieval-readiness audit](docs/audits/milestone_9_semantic_retrieval_readiness_audit.md)
+- [Milestone 10 scholarly-analysis-readiness audit](docs/audits/milestone_10_scholarly_analysis_readiness_audit.md)
+- [Milestone 11 real-paper evaluation-readiness audit](docs/audits/milestone_11_real_paper_evaluation_readiness_audit.md)
 
 ## Limitations
 
@@ -1179,6 +1383,22 @@ Mathematical details are in:
 - There is no external fact verification, neural embedding model, vector
   database, approximate nearest-neighbor index, cross-encoder, or learned
   neural reranker.
+- Scholarly equations are detected only from available extracted text. There
+  is no OCR, visual formula recovery, symbolic algebra, or equivalence proof.
+- Section roles, definitions, experimental fields, limitations, and reference
+  links use conservative deterministic rules. Ambiguous or absent values
+  remain explicit; extraction can still have false positives and negatives.
+- Markdown/delimited tables are supported only when their text layout is
+  regular. Figures, charts, merged cells, and visual PDF tables are not
+  interpreted.
+- A research-gap worksheet organizes cited limitations and system-generated
+  suggestions. It does not establish novelty or perform a literature review.
+- Evaluation relevance, entity, concept, claim, completeness, and audience
+  scores are transparent heuristics with false positives and negatives. They
+  do not prove semantic correctness.
+- Candidate benchmarks require human approval, and a small paper set cannot
+  support broad performance claims. Reviewer disagreement is not yet
+  adjudicated by a multi-annotator protocol.
 - Generated bigram or tiny-transformer text should not be interpreted as
   meaningful general language.
 
@@ -1186,7 +1406,9 @@ Mathematical details are in:
 
 The next recommended milestone is:
 
-> Build paper-specific scholarly tooling: equation and notation extraction, reference linking, structured paper summaries, methodology and experiment extraction, cross-paper comparison, implementation checklists, and research-gap analysis while preserving exact citations.
+> Use the human-approved correction dataset to train and evaluate the custom
+> transformer for grounded scholarly instruction following, with deterministic
+> extractive rendering retained as the trusted baseline.
 
 See [the full roadmap](docs/roadmap.md) and
 [the architecture](docs/architecture.md).

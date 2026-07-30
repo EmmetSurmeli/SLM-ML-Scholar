@@ -1,0 +1,242 @@
+{
+  "dense_gate_companion.md": {
+    "assumption_count": 0,
+    "claim_count": 4,
+    "checklist_statuses": {
+      "ambiguous": [],
+      "conflicting": [],
+      "found": [
+        "architecture",
+        "baselines",
+        "batch size",
+        "dataset",
+        "dimensions",
+        "layers",
+        "learning rate",
+        "metrics",
+        "optimizer",
+        "sample sizes",
+        "split"
+      ],
+      "not_found": [
+        "dropout",
+        "epochs or steps",
+        "evaluation protocol",
+        "hardware",
+        "heads",
+        "initialization",
+        "number of runs",
+        "objective",
+        "preprocessing",
+        "random seeds",
+        "schedule",
+        "software",
+        "statistical tests",
+        "stopping criteria",
+        "weight decay"
+      ]
+    },
+    "datasets": ["spiralbench"],
+    "defined_symbols": [],
+    "equation_count": 0,
+    "equation_numbers": [],
+    "experiment_names": ["Component Analysis", "Method and Experimental Setup"],
+    "hyperparameters": ["batch_size", "hidden_dimension", "layers", "learning_rate"],
+    "limitation_count": 2,
+    "metadata": {
+      "authors": ["Nia Brooks", "Omar Lee"],
+      "identifier": null,
+      "title": "dense and sparse gates: a controlled comparison",
+      "venue": null,
+      "year": 2025
+    },
+    "method_fields": ["architecture", "optimizer"],
+    "metrics": ["accuracy"],
+    "reference_link_count": 0,
+    "reference_titles": ["Sparse Gate Networks"],
+    "result_values": ["87.3%", "90.1%", "90.8%"],
+    "risk_flags": [
+      "evaluation protocol unspecified",
+      "hardware missing",
+      "number of runs missing",
+      "number of training epochs or steps missing",
+      "preprocessing unspecified",
+      "random seed missing"
+    ],
+    "section_roles": {
+      "Abstract": "abstract",
+      "Component Analysis": "ablation",
+      "Results": "results"
+    },
+    "symbols": [],
+    "unresolved_symbols": []
+  },
+  "robust_mean_estimation.md": {
+    "assumption_count": 2,
+    "claim_count": 2,
+    "checklist_statuses": {
+      "ambiguous": [],
+      "conflicting": [],
+      "found": [
+        "baselines",
+        "dataset",
+        "metrics",
+        "number of runs",
+        "sample sizes"
+      ],
+      "not_found": [
+        "architecture",
+        "batch size",
+        "dimensions",
+        "dropout",
+        "epochs or steps",
+        "evaluation protocol",
+        "hardware",
+        "heads",
+        "initialization",
+        "layers",
+        "learning rate",
+        "objective",
+        "optimizer",
+        "preprocessing",
+        "random seeds",
+        "schedule",
+        "software",
+        "split",
+        "statistical tests",
+        "stopping criteria",
+        "weight decay"
+      ]
+    },
+    "datasets": ["gaussianshift"],
+    "defined_symbols": ["n"],
+    "equation_count": 3,
+    "equation_numbers": ["1"],
+    "experiment_names": ["Evaluation"],
+    "hyperparameters": ["trials"],
+    "limitation_count": 2,
+    "metadata": {
+      "authors": ["Lena Morris", "Arun Shah"],
+      "identifier": null,
+      "title": "robust mean estimation under contamination",
+      "venue": null,
+      "year": 2024
+    },
+    "method_fields": [],
+    "metrics": ["calibration error", "mean squared error"],
+    "reference_link_count": 0,
+    "reference_titles": ["Robust Statistics"],
+    "result_values": ["0.11", "0.18", "0.22", "0.25", "0.28", "0.42", "95%"],
+    "risk_flags": [
+      "data split unspecified",
+      "evaluation protocol unspecified",
+      "hardware missing",
+      "number of training epochs or steps missing",
+      "preprocessing unspecified",
+      "random seed missing"
+    ],
+    "section_roles": {
+      "Abstract": "abstract",
+      "Evaluation": "experiments",
+      "Procedure": "algorithm"
+    },
+    "symbols": ["\\epsilon", "\\hat{\\mu}", "\\tau", "i", "k", "n", "x"],
+    "unresolved_symbols": ["\\epsilon", "\\hat{\\mu}", "\\tau", "i", "x"]
+  },
+  "sparse_gate_network.md": {
+    "assumption_count": 1,
+    "claim_count": 5,
+    "checklist_statuses": {
+      "ambiguous": [],
+      "conflicting": ["learning rate"],
+      "found": [
+        "architecture",
+        "baselines",
+        "batch size",
+        "dataset",
+        "dimensions",
+        "dropout",
+        "epochs or steps",
+        "layers",
+        "metrics",
+        "number of runs",
+        "objective",
+        "optimizer",
+        "preprocessing",
+        "random seeds",
+        "sample sizes",
+        "split",
+        "weight decay"
+      ],
+      "not_found": [
+        "evaluation protocol",
+        "hardware",
+        "heads",
+        "initialization",
+        "schedule",
+        "software",
+        "statistical tests",
+        "stopping criteria"
+      ]
+    },
+    "datasets": ["spiralbench"],
+    "defined_symbols": ["W_g", "b_g", "g", "x_i"],
+    "equation_count": 4,
+    "equation_numbers": ["1", "2", "3"],
+    "experiment_names": ["Ablation", "Appendix: Sensitivity", "Experiments"],
+    "hyperparameters": [
+      "batch_size",
+      "dropout",
+      "epochs",
+      "hidden_dimension",
+      "layers",
+      "learning_rate",
+      "random_seed",
+      "trials",
+      "weight_decay"
+    ],
+    "limitation_count": 3,
+    "metadata": {
+      "authors": ["Mira Chen", "Pavel Ortiz"],
+      "identifier": "10.1234/localml.sgn",
+      "title": "sparse gate networks for sequence classification",
+      "venue": "open methods workshop",
+      "year": 2025
+    },
+    "method_fields": [
+      "architecture",
+      "objective_function",
+      "optimizer",
+      "preprocessing"
+    ],
+    "metrics": ["accuracy", "f1"],
+    "reference_link_count": 2,
+    "reference_titles": ["Dense Encoders", "Structured Pruning"],
+    "result_values": ["0.874", "0.907", "84.9%", "86.4%", "88.0%", "91.2%"],
+    "risk_flags": [
+      "conflicting values for learning rate",
+      "evaluation protocol unspecified",
+      "hardware missing"
+    ],
+    "section_roles": {
+      "Ablation": "ablation",
+      "Algorithm": "algorithm",
+      "Experiments": "experiments",
+      "Limitations": "limitations"
+    },
+    "symbols": [
+      "L",
+      "W_g",
+      "W_q",
+      "\\sigma",
+      "b_g",
+      "g",
+      "h_i",
+      "p_i",
+      "q",
+      "x_i",
+      "y_i"
+    ],
+    "unresolved_symbols": ["L", "W_q", "\\sigma", "p_i", "y_i"]
+  }
+}

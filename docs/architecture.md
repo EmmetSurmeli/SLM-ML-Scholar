@@ -69,6 +69,18 @@ extend:
   extractive and explicit-checkpoint generative paths, inline citations,
   claim diagnostics, acceptance/fallback, evaluation, answer artifacts, and
   the answer CLI.
+- `scholarly/` owns deterministic paper-specific extraction, source-linked
+  notation/equation records, structured summaries, reproduction checklists,
+  comparison, and research-gap worksheets.
+- `review_app/` owns a loopback-only HTTP boundary, packaged browser assets,
+  local upload/index orchestration, exact interaction snapshots, and the
+  structured human-feedback queue. It composes retrieval, answering, and
+  scholarly analysis but none of those packages import it.
+- `evaluation/` owns human-approved paper benchmarks, candidate generation,
+  stage-wise graders, one-target audience rendering, failure attribution,
+  selective review, correction export, regression comparison, reports, and
+  the evaluation CLI. It composes retrieval/answering/scholarly artifacts but
+  does not alter their mathematics.
 - `models/` composes primitives into checkpointable models.
 - `optimizers.py` remains the Milestone 1 named-array SGD compatibility path.
 - `generation.py` owns bigram and tokenizer-aware transformer autoregressive
@@ -84,6 +96,73 @@ The bigram model retains its original one-matrix interface. New neural modules
 register lightweight `Parameter` objects explicitly. Recursive enumeration
 produces deterministic dotted names such as `network.0.weight`, while
 optimizer state is keyed to parameter identity rather than a name.
+
+## Local review application boundary
+
+The narrow Review Lab composes the already validated deterministic components:
+
+```text
+local PDF / UTF-8 text / Markdown
+        ↓ localhost upload (30 MiB limit)
+repository-local raw bytes
+        ↓ exact/page-aware ingestion
+immutable RetrievalIndex snapshot
+        ├── ScholarlyAnalysisPipeline → structured inspection views
+        └── selected-document GroundedAnswerPipeline
+                    ↓
+          cited extractive answer or abstention
+                    ↓
+ reviewer verdict + issue labels + correction
+                    ↓
+ ignored, atomic feedback.json for deliberate later review
+```
+
+The HTTP server rejects non-loopback binding and serves only bundled assets.
+PDF decoding is an optional infrastructure dependency, separate from all neural
+code. The raw papers and application state live under existing Git-ignored
+`data/raw/` and `outputs/` paths.
+
+The feedback queue is intentionally not an online-learning channel. A saved
+review cannot mutate retrieval, answer logic, or model parameters. Later work
+must validate the review against its captured evidence and convert accepted
+cases into explicitly licensed data or committed regression fixtures.
+
+## Current real-paper evaluation architecture
+
+Milestone 11.5 places an explicit assessment layer above immutable source,
+retrieval, answering, and scholarly-analysis artifacts:
+
+```text
+immutable local paper + RetrievalIndex
+        ↓ deterministic candidates or authored questions
+human review → approved source-bound benchmark
+        ↓
+ranked retrieval ──────────────→ retrieval/section/boilerplate grade
+        ↓
+evidence selection + sufficiency → answer/abstain decision grade
+        ↓
+raw GroundedAnswer ────────────→ relevance/concept/claim/citation grade
+        ↓
+cited StructuredAnswerTarget
+        ↓
+beginner / undergraduate / researcher deterministic rendering
+        ↓
+audience diagnostics + multi-label failures + cautious likely root cause
+        ↓
+selective human review → approved correction dataset
+```
+
+Benchmarks bind exact document and index hashes. Proposed candidates are
+untrusted and are structurally excluded from `EvaluationRunner`. Retrieval
+results and raw answers are retained so later reports do not hide failures
+behind aggregates. Comparison requires an identical benchmark and question
+set, records all configuration/package differences, and exposes changed
+answers, evidence, citations, and failures per question.
+
+Audience depth is a presentation decision, not a second factual-generation
+pass. All levels use one cited target. The deterministic renderer is trusted;
+the style grader is diagnostic. No external judge, semantic entailment model,
+web search, or automatic literature verification participates in this layer.
 
 ## Manual backward and cache contract
 
@@ -341,7 +420,7 @@ every decoder block, and the vocabulary head. `number_of_heads` is part of the
 complete checkpointed configuration. The public state loader validates every
 key, shape, dtype, and finite value before changing any parameter.
 
-The 1.0.0 package retains the 0.7.0 model schema. Its loaders recognize 0.5.0
+The 1.1.1 package retains the 0.7.0 model schema. Its loaders recognize 0.5.0
 and 0.6.0 model checkpoints plus 0.5.1 and 0.6.0 full training checkpoints.
 Single-head legacy configuration migration still adds `number_of_heads=1` in
 memory. Legacy character vocabularies migrate into the unified tokenizer
@@ -499,6 +578,64 @@ then adds exact cosine, explicit score/rank fusion, and deterministic
 feature-based reranking. Retrieval may change the selected chunk set, but
 evidence creation and answer validation still bind only to original source
 ranges. The semantic layer never reconstructs citation metadata from vectors.
+
+## Current scholarly-analysis architecture
+
+Milestone 11 adds a deterministic analysis layer above immutable documents and
+alongside retrieval:
+
+```text
+RetrievalIndex + exact Document text
+                 |
+                 v
+  metadata + section roles + equations + notation
+                 |
+                 v
+ assumptions + methods + experiments + results + references
+                 |
+                 v
+ cited summaries / checklists / comparisons / gap worksheets
+                 |
+                 v
+ versioned, hash-bound scholarly artifacts
+```
+
+`ScholarlyAnalysisPipeline` never constructs or calls the transformer. Newly
+indexed papers are analyzed from their preserved text and do not require model
+training. `SourceCitation` binds each substantive value to document, section,
+character, line, optional page, and source-text hash. Artifact loading
+revalidates the index hash, document hashes, configuration, package version,
+artifact hash, and every embedded source citation.
+
+Section classification is deterministic and multi-label. Unknown or ambiguous
+roles remain visible with reasons and categorical confidence. Equation
+detection operates only on textual delimiters and narrow operator-heavy lines;
+it retains raw text and exact offsets and performs no symbolic algebra.
+Notation definitions use explicit phrases, source proximity, and retained
+conflicts. Methods and experiment fields are never filled from external
+knowledge.
+
+Reference linking resolves numbered markers and unique author/year markers only
+when they match parsed local entries deterministically. Ambiguous markers
+remain unresolved. Tables are accepted only from regular Markdown pipe syntax
+or consistent delimiter rows.
+
+The summary, reproduction checklist, cross-paper comparison, and research-gap
+worksheet consume the same cited extraction objects. A comparison marks
+incompatible metrics or experimental settings rather than claiming a winner.
+Gap suggestions distinguish source-stated limitations from system inference
+and explicitly do not establish novelty.
+
+Optional equation-aware reranking can add equation numbers, symbols, and
+operators to the explanation of a retrieval result. It does not change source
+identity or claim equation equivalence. The scholarly CLI supports JSON,
+Markdown views, exact section-role filtering for extraction commands, and
+atomic artifact writes.
+
+Limitations are architectural: there is no OCR, visual PDF layout recovery,
+figure/chart interpretation, arbitrary table reconstruction, external metadata
+lookup, learned classifier, neural scholarly extraction, literature-wide
+search, or novelty verification.
 
 ## Future module constraints
 

@@ -309,6 +309,25 @@ def test_legacy_lexical_index_loads_and_requires_explicit_enrichment() -> None:
     assert enriched.index_format_version == 2
 
 
+def test_version_two_index_from_package_1_0_remains_loadable() -> None:
+    current = _semantic_index()
+    state = current.state_dict()
+    state["package_version"] = "1.0.0"
+    state_without_hash = dict(state)
+    state_without_hash.pop("index_sha256")
+    state["index_sha256"] = hashlib.sha256(
+        canonical_json(state_without_hash).encode("utf-8")
+    ).hexdigest()
+
+    loaded = RetrievalIndex.from_state_dict(state)
+
+    assert loaded.package_version == "1.0.0"
+    assert loaded.index_format_version == 2
+    assert [item.to_dict() for item in loaded.search("alpha", method="semantic")] == [
+        item.to_dict() for item in current.search("alpha", method="semantic")
+    ]
+
+
 def test_malformed_semantic_state_is_rejected_transactionally() -> None:
     index = _semantic_index()
     before = index.state_dict()

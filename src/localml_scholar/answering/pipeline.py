@@ -170,7 +170,36 @@ class GroundedAnswerPipeline:
         metadata=None,
     ) -> GroundedAnswer:
         resolved_answerer = answerer or self.extractive_answerer
-        result = resolved_answerer.answer(question, evidence)
+        try:
+            result = resolved_answerer.answer(question, evidence)
+        except ValueError as error:
+            if str(error) != "No source sentence fits the extractive answer budget.":
+                raise
+            abstention_sufficiency = replace(
+                sufficiency,
+                sufficient=False,
+                reasons=tuple(
+                    dict.fromkeys(
+                        (*sufficiency.reasons, "no_extractable_source_sentence")
+                    )
+                ),
+            )
+            abstention_metadata = metadata or self._metadata(selection, evidence)
+            abstention_metadata = {
+                **abstention_metadata,
+                "answer_construction_abstention": {
+                    "reason": "no_extractable_source_sentence",
+                    "extractive_config": resolved_answerer.config.to_dict(),
+                },
+            }
+            return self._abstention(
+                question,
+                method,
+                evidence,
+                abstention_sufficiency,
+                selection,
+                metadata=abstention_metadata,
+            )
         claims, validation = validate_answer_text(
             self.index,
             result.answer_text,

@@ -239,9 +239,55 @@ LSA is a linear corpus-dependent baseline, not a modern neural embedding
 model. Similarity does not prove relevance or factual support. BM25 and TF-IDF
 remain independently available.
 
+## Milestone 11 — Paper-specific scholarly analysis
+
+Status: complete and verified.
+
+- canonical paper identity and source-verifiable metadata priority
+- multi-label section roles with retained ambiguity and unknown sections
+- text-only equation blocks, exact offsets, numbering, and conservative
+  normalization
+- source-linked notation glossaries with conflicts and unresolved symbols
+- cited assumptions, claims, methods, procedures, datasets, metrics,
+  hyperparameters, experiments, results, ablations, limitations, and references
+- deterministic local numbered and unique author/year reference linking
+- regular Markdown/delimiter table parsing without visual-layout invention
+- equation-aware retrieval reranking with unchanged source identities
+- citation-only structured summaries and completeness reporting
+- reproduction checklists with missing, ambiguous, conflicting, and risk states
+- cross-paper comparison with incompatible-result warnings
+- research-gap worksheets that do not claim novelty
+- versioned atomic artifacts, section-filtered CLI views, authored fixtures,
+  extraction metrics, and deterministic demonstration experiments
+
+There is no OCR, visual PDF recovery, symbolic equation solver, external
+metadata lookup, learned scholarly extractor, or literature-wide novelty
+verification. Citation provenance does not prove semantic correctness.
+
+## Milestone 11.5 — Real-paper evaluation and failure analysis
+
+Status: complete.
+
+- source/index-bound human-approved benchmark schemas
+- deterministic scholarly candidate generation and explicit review decisions
+- 33-question untrusted *Attention Is All You Need* starter
+- retrieval, section, boilerplate, sufficiency, relevance, concept,
+  prohibited-claim, citation, completeness, abstention, and audience grades
+- one cited structured target with three deterministic audience renderers
+- multi-label failure taxonomy and uncertainty-aware likely root causes
+- deterministic selective review queues and adjudication records
+- per-question, paper, system, failure, review, and regression reports
+- atomic evaluation artifacts and source-validated correction export
+- extraction-only evaluation without a transformer; explicit checkpoint
+  identity for generative evaluation
+
+The automated signals remain heuristics. They do not prove semantic
+correctness, and proposed questions or unreviewed corrections are never
+treated as gold/training data.
+
 The next recommended milestone is:
 
-> Build paper-specific scholarly tooling: equation and notation extraction, reference linking, structured paper summaries, methodology and experiment extraction, cross-paper comparison, implementation checklists, and research-gap analysis while preserving exact citations.
+> Use the human-approved correction dataset to train and evaluate the custom transformer for grounded scholarly instruction following, with deterministic extractive rendering retained as the trusted baseline.
 
 ## Deferred — Correctness reference
 
@@ -256,7 +302,9 @@ Only after the independent implementation works:
 
 The reference must not become the source of the manual implementation.
 
-## Milestone 11 — Paper-specific scholarly tooling
+## Milestone 12 — Grounded scholarly explanation training
+
+Status: planned.
 
 Build a legally usable, versioned training and evaluation corpus from:
 
@@ -282,7 +330,13 @@ Target capabilities:
 - limitation analysis
 - reproduction planning
 
-## Milestone 12 — Evaluation
+Derive instruction examples from the immutable structured artifacts, retain
+exact evidence and licensing metadata, train only the project transformer, and
+evaluate generated explanations against deterministic extraction and citation
+validation. The deterministic path remains the trusted baseline and every
+generated claim must retain or recover exact evidence.
+
+## Milestone 13 — Evaluation
 
 Create a manually reviewed benchmark with:
 
@@ -307,9 +361,16 @@ Compare:
 Factuality evaluation must point to exact page-level evidence in the supplied
 paper. Record annotator instructions and disagreement.
 
-## Milestone 13 — Local application
+## Milestone 14 — Local application
 
-Build a lightweight local interface for:
+Status: partially implemented early as the narrow localhost-only Review Lab.
+
+The implemented slice supports local paper upload, exact source inspection,
+deterministic scholarly artifacts, cited extractive questions, and structured
+feedback snapshots for later Codex/manual review. It deliberately does not
+perform automatic training from feedback.
+
+Complete the broader lightweight local interface with:
 
 - opening a paper
 - viewing extracted sections
@@ -321,8 +382,11 @@ Build a lightweight local interface for:
 - saving notes locally
 
 Define the local privacy boundary and storage paths in the interface.
+Add rendered-PDF navigation, citation-to-page linking, paper removal/export,
+review adjudication, and explicitly licensed dataset curation before marking
+the milestone complete.
 
-## Milestone 14 — Performance optimization
+## Milestone 15 — Performance optimization
 
 Profile before optimizing. Potential targets include:
 

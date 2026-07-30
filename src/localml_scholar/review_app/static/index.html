@@ -1,0 +1,276 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <meta
+      name="description"
+      content="A private, localhost-only paper review workspace for LocalML Scholar."
+    >
+    <title>LocalML Scholar — Review Lab</title>
+    <link rel="stylesheet" href="/styles.css">
+    <script src="/app.js" defer></script>
+  </head>
+  <body>
+    <header class="topbar">
+      <a class="brand" href="/" aria-label="LocalML Scholar review lab">
+        <span class="brand-mark">LS</span>
+        <span>
+          <strong>LocalML Scholar</strong>
+          <small>Review Lab</small>
+        </span>
+      </a>
+      <div class="privacy-pill">
+        <span class="pulse" aria-hidden="true"></span>
+        Local only · no cloud
+      </div>
+    </header>
+
+    <main class="workspace">
+      <aside class="sidebar" aria-label="Paper library">
+        <section>
+          <div class="section-heading">
+            <div>
+              <p class="eyebrow">Workspace</p>
+              <h1>Your paper library</h1>
+            </div>
+            <span class="count" id="paper-count">0</span>
+          </div>
+
+          <label class="dropzone" id="dropzone" for="paper-file">
+            <input
+              id="paper-file"
+              type="file"
+              accept=".pdf,.txt,.md,.markdown,application/pdf,text/plain,text/markdown"
+            >
+            <span class="upload-symbol" aria-hidden="true">↑</span>
+            <strong>Drop a paper here</strong>
+            <span>or choose PDF, Markdown, or text</span>
+            <small>PDF text is extracted locally. 30 MiB limit.</small>
+          </label>
+          <div class="upload-progress hidden" id="upload-progress" role="status">
+            <span class="spinner" aria-hidden="true"></span>
+            <span>Reading and indexing the paper…</span>
+          </div>
+        </section>
+
+        <nav class="paper-list" id="paper-list" aria-label="Indexed papers">
+          <div class="empty-sidebar">
+            Add your first paper to begin.
+          </div>
+        </nav>
+
+        <section class="feedback-status">
+          <div>
+            <p class="eyebrow">Manual review</p>
+            <strong><span id="feedback-count">0</span> feedback records</strong>
+          </div>
+          <button class="text-button" id="show-storage" type="button">
+            Storage paths
+          </button>
+        </section>
+      </aside>
+
+      <section class="main-panel">
+        <div class="welcome" id="welcome">
+          <div class="welcome-card">
+            <p class="eyebrow">Grounded paper reading</p>
+            <h2>Read closely. Ask precisely. Correct the system.</h2>
+            <p>
+              Add a locally stored paper, ask questions against its indexed
+              evidence, and save your assessment with the exact answer snapshot.
+            </p>
+            <ol class="workflow">
+              <li><span>1</span><div><strong>Add</strong><small>PDF or prepared text</small></div></li>
+              <li><span>2</span><div><strong>Ask</strong><small>Evidence-scoped questions</small></div></li>
+              <li><span>3</span><div><strong>Review</strong><small>Citations and extracted details</small></div></li>
+              <li><span>4</span><div><strong>Correct</strong><small>Queue feedback for Codex</small></div></li>
+            </ol>
+            <p class="caution">
+              Current answers are deterministic and extractive. They quote and
+              assemble relevant passages; they do not yet provide expert-quality
+              free-form explanations.
+            </p>
+          </div>
+        </div>
+
+        <div class="paper-workspace hidden" id="paper-workspace">
+          <header class="paper-header">
+            <div>
+              <p class="eyebrow" id="paper-source">Paper</p>
+              <h2 id="paper-title">Untitled paper</h2>
+              <div class="paper-stats" id="paper-stats"></div>
+            </div>
+            <span class="status-chip">Indexed</span>
+          </header>
+
+          <section class="ask-card">
+            <div class="ask-heading">
+              <label for="question">Ask this paper</label>
+              <span>Audience level is saved with the interaction</span>
+            </div>
+            <fieldset class="audience-options" id="question-audience">
+              <legend>Who should the eventual explanation be for?</legend>
+              <label>
+                <input type="radio" name="question-audience" value="researcher">
+                <span>
+                  <strong>PhD / professor</strong>
+                  <small>Technical precision, assumptions, and research nuance</small>
+                </span>
+              </label>
+              <label>
+                <input type="radio" name="question-audience" value="undergraduate" checked>
+                <span>
+                  <strong>Undergraduate</strong>
+                  <small>Course-level math with concepts explained clearly</small>
+                </span>
+              </label>
+              <label>
+                <input type="radio" name="question-audience" value="beginner">
+                <span>
+                  <strong>High school / beginner</strong>
+                  <small>Plain language, prerequisites, and careful intuition</small>
+                </span>
+              </label>
+            </fieldset>
+            <p class="audience-note">
+              The current extractive baseline records this target but does not
+              rewrite its cited passages by level yet. Your feedback will guide
+              that future behavior.
+            </p>
+            <div class="question-box">
+              <textarea
+                id="question"
+                rows="3"
+                maxlength="4000"
+                placeholder="What assumptions does this method make?"
+              ></textarea>
+              <button class="primary-button" id="ask-button" type="button">
+                Ask with citations
+              </button>
+            </div>
+            <div class="prompt-row" aria-label="Suggested questions">
+              <button type="button" data-prompt="Explain the main method and its assumptions.">Main method</button>
+              <button type="button" data-prompt="What datasets, metrics, and baselines are used?">Experiments</button>
+              <button type="button" data-prompt="What limitations does the paper state?">Limitations</button>
+              <button type="button" data-prompt="Turn the paper into a reproduction checklist.">Reproduce</button>
+            </div>
+          </section>
+
+          <section class="answer-card hidden" id="answer-card" aria-live="polite">
+            <div class="answer-heading">
+              <div>
+                <p class="eyebrow">Evidence-grounded response</p>
+                <h3 id="answer-question"></h3>
+              </div>
+              <div class="status-stack">
+                <span class="audience-chip" id="answer-audience"></span>
+                <span class="answer-status" id="answer-status"></span>
+              </div>
+            </div>
+            <div class="answer-text" id="answer-text"></div>
+            <div class="evidence-grid" id="evidence-grid"></div>
+
+            <div class="feedback-panel">
+              <div class="feedback-intro">
+                <div>
+                  <p class="eyebrow">Teach through review</p>
+                  <h3>How did this answer do?</h3>
+                </div>
+                <span>Saved for later Codex review — not automatic training</span>
+              </div>
+              <fieldset class="audience-options feedback-audience" id="feedback-audience">
+                <legend>Judge this answer for which audience?</legend>
+                <label>
+                  <input type="radio" name="feedback-audience" value="researcher">
+                  <span><strong>PhD / professor</strong></span>
+                </label>
+                <label>
+                  <input type="radio" name="feedback-audience" value="undergraduate">
+                  <span><strong>Undergraduate</strong></span>
+                </label>
+                <label>
+                  <input type="radio" name="feedback-audience" value="beginner">
+                  <span><strong>High school / beginner</strong></span>
+                </label>
+                <small>
+                  You can save separate reviews of the same answer for different
+                  audiences.
+                </small>
+              </fieldset>
+              <fieldset class="verdict-options">
+                <legend class="sr-only">Answer verdict</legend>
+                <label><input type="radio" name="verdict" value="correct"><span>Correct</span></label>
+                <label><input type="radio" name="verdict" value="partially_correct"><span>Partly correct</span></label>
+                <label><input type="radio" name="verdict" value="incorrect"><span>Incorrect</span></label>
+              </fieldset>
+              <fieldset class="issue-options" id="issue-options">
+                <legend>What needs attention?</legend>
+                <label><input type="checkbox" value="wrong_answer"><span>Wrong answer</span></label>
+                <label><input type="checkbox" value="missing_evidence"><span>Missing evidence</span></label>
+                <label><input type="checkbox" value="incorrect_citation"><span>Incorrect citation</span></label>
+                <label><input type="checkbox" value="missed_equation"><span>Missed equation</span></label>
+                <label><input type="checkbox" value="missing_method_detail"><span>Missing method detail</span></label>
+                <label><input type="checkbox" value="extraction_error"><span>Extraction error</span></label>
+                <label><input type="checkbox" value="too_advanced"><span>Too advanced</span></label>
+                <label><input type="checkbox" value="too_basic"><span>Too basic</span></label>
+                <label><input type="checkbox" value="missing_prerequisite"><span>Missing prerequisite</span></label>
+                <label><input type="checkbox" value="unclear_explanation"><span>Unclear explanation</span></label>
+                <label><input type="checkbox" value="other"><span>Other</span></label>
+              </fieldset>
+              <div class="feedback-fields">
+                <label>
+                  Your corrected answer <span>optional</span>
+                  <textarea id="corrected-answer" rows="3" maxlength="20000" placeholder="Write what a better answer should say…"></textarea>
+                </label>
+                <label>
+                  Review notes <span>optional</span>
+                  <textarea id="feedback-notes" rows="3" maxlength="10000" placeholder="Point out the precise error, missed page, or reasoning gap…"></textarea>
+                </label>
+              </div>
+              <button class="secondary-button" id="save-feedback" type="button">
+                Save feedback for Codex
+              </button>
+              <span class="save-state" id="feedback-save-state" role="status"></span>
+            </div>
+          </section>
+
+          <section class="analysis-card">
+            <div class="tab-list" role="tablist" aria-label="Paper analysis">
+              <button class="active" role="tab" aria-selected="true" data-tab="overview">Overview</button>
+              <button role="tab" aria-selected="false" data-tab="equations">Equations & notation</button>
+              <button role="tab" aria-selected="false" data-tab="methods">Methods & experiments</button>
+              <button role="tab" aria-selected="false" data-tab="checklist">Reproduction checklist</button>
+              <button role="tab" aria-selected="false" data-tab="source">Extracted source</button>
+            </div>
+            <div class="analysis-body" id="analysis-body">
+              <div class="analysis-loading">
+                <span class="spinner" aria-hidden="true"></span>
+                <span>Building deterministic paper analysis…</span>
+              </div>
+            </div>
+          </section>
+        </div>
+      </section>
+    </main>
+
+    <dialog id="storage-dialog">
+      <form method="dialog">
+        <div class="dialog-heading">
+          <div>
+            <p class="eyebrow">Private persistence</p>
+            <h2>Local storage paths</h2>
+          </div>
+          <button class="close-button" aria-label="Close" value="close">×</button>
+        </div>
+        <p>
+          These ignored repository files remain on this computer. In a later
+          Codex task, ask to review the feedback file and adjust the system.
+        </p>
+        <dl id="storage-paths"></dl>
+      </form>
+    </dialog>
+
+    <div class="toast" id="toast" role="alert" aria-live="assertive"></div>
+  </body>
+</html>

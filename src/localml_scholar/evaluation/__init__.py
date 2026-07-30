@@ -1,0 +1,87 @@
+"""Deterministic real-paper evaluation and human review infrastructure."""
+
+from localml_scholar.evaluation.attention_starter import (
+    attention_starter_question_count,
+    generate_attention_starter_benchmark,
+)
+from localml_scholar.evaluation.benchmark import (
+    apply_review_decisions,
+    generate_candidate_benchmark,
+)
+from localml_scholar.evaluation.comparison import compare_evaluation_runs
+from localml_scholar.evaluation.human_review import (
+    aggregate_human_review_metrics,
+    build_review_queue,
+    export_approved_corrections,
+    record_human_review,
+)
+from localml_scholar.evaluation.runner import (
+    EvaluationRunner,
+    aggregate_evaluation_metrics,
+    grouped_metrics,
+)
+from localml_scholar.evaluation.schemas import (
+    ANSWERABILITY,
+    AUDIENCE_LEVELS,
+    EVALUATION_FORMAT_VERSION,
+    PAPER_SUFFICIENCY,
+    QUESTION_TYPES,
+    REVIEW_STATUSES,
+    AnswerGrade,
+    AudienceGrade,
+    Benchmark,
+    BenchmarkQuestion,
+    CitationGrade,
+    CitedAnswerPoint,
+    ConceptCoverage,
+    ConceptGroup,
+    CorrectionExample,
+    EvaluationConfig,
+    EvaluationRun,
+    GoldEvidence,
+    HumanReviewRecord,
+    QuestionEvaluation,
+    RetrievalGrade,
+    RootCauseAttribution,
+    StructuredAnswerTarget,
+    SufficiencyGrade,
+)
+
+__all__ = [
+    "ANSWERABILITY",
+    "AUDIENCE_LEVELS",
+    "EVALUATION_FORMAT_VERSION",
+    "PAPER_SUFFICIENCY",
+    "QUESTION_TYPES",
+    "REVIEW_STATUSES",
+    "AnswerGrade",
+    "AudienceGrade",
+    "Benchmark",
+    "BenchmarkQuestion",
+    "CitationGrade",
+    "CitedAnswerPoint",
+    "ConceptCoverage",
+    "ConceptGroup",
+    "CorrectionExample",
+    "EvaluationConfig",
+    "EvaluationRun",
+    "GoldEvidence",
+    "HumanReviewRecord",
+    "QuestionEvaluation",
+    "RetrievalGrade",
+    "RootCauseAttribution",
+    "StructuredAnswerTarget",
+    "SufficiencyGrade",
+    "EvaluationRunner",
+    "aggregate_evaluation_metrics",
+    "aggregate_human_review_metrics",
+    "apply_review_decisions",
+    "attention_starter_question_count",
+    "build_review_queue",
+    "compare_evaluation_runs",
+    "export_approved_corrections",
+    "generate_attention_starter_benchmark",
+    "generate_candidate_benchmark",
+    "grouped_metrics",
+    "record_human_review",
+]
