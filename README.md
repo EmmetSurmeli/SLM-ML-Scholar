@@ -21,9 +21,26 @@ framework or automatic-differentiation system. This is an educational and
 engineering constraint, not a claim that a from-scratch model is automatically
 faster or more capable.
 
-## Current status: Milestone 11.5
+## Current status: Milestone 12A.1
 
-The package version is `1.1.1`.
+The package version is `1.2.1`.
+
+Milestone 12A.1 adds confidence-gated second-pass review without treating
+automation as human gold:
+
+- permanent human/Codex approval and rejection states
+- 16 mandatory approval gates with a default 0.95 threshold
+- conservative mandatory-human routes for semantic and extraction risks
+- three transparent, correlated reviewer configurations (not independent agents)
+- correction revalidation from the original evidence and citations
+- calibration lockout until at least 50 paired human outcomes qualify
+- deterministic 10% plus risk-triggered audit sampling
+- human-only, human-and-audited, and explicit Codex-inclusive trust tiers
+- provenance hashes, circular self-training warnings, and duplicate clusters
+- paper-level split and explicit test-only leakage protection
+
+No transformer training occurs in this milestone. The application uses only
+papers the user supplies locally; it does not discover or download papers.
 
 Milestone 1 is complete and independently audited. Its character-level bigram
 learns a \(V\times V\) table of next-character logits and conditions only on
@@ -274,8 +291,8 @@ Milestone 11.5 adds automated real-paper evaluation and error analysis:
 - versioned, source/index-bound benchmark questions with deterministic IDs
 - explicit answerability, paper sufficiency, expected/forbidden sections,
   graded evidence, required concepts, prohibited claims, and review state
-- generic candidate generation plus a 33-question untrusted
-  *Attention Is All You Need* starter
+- generic candidate generation plus an expanded untrusted
+  *Attention Is All You Need* starter containing all 80 specified prompts
 - a hard approval boundary: proposed questions never enter official metrics
 - separate retrieval, sufficiency, answer relevance, completeness, required
   concepts, citations, abstention, and audience grades
@@ -299,6 +316,28 @@ transparent heuristics expose likely problems; they do not prove semantic
 correctness. Human approval remains the trusted boundary for gold annotations
 and future correction data.
 
+Milestone 12A turns the narrow Review Lab into a local Paper Training Lab:
+
+- paper registration, extracted-source inspection, and one/multi/all-paper
+  evidence scopes
+- arbitrary questions plus deterministic 40–80 proposed candidates per paper
+- the Attention-paper starter expanded with all 80 required prompts
+- deterministic adaptive instruction profiles from prompts, recent local
+  turns, opt-in preferences, and explicit overrides
+- separate presentation and evidence-selection paths
+- paper-explicit, mathematical-inference, external-knowledge, and uncertain
+  provenance labels
+- answer/evidence review, corrected targets, and a separate approval gate
+- proposed-only correction and prompt-variation suggestions
+- versioned grounded instruction examples and approved-only export
+- paper-level train/validation/test splits with cross-paper leakage prevention
+- diversity warnings and 100/300/600 review-throughput targets
+- batch question-generation, baseline-run, dataset-export, and report commands
+
+Milestone 12A performs no training or fine-tuning. It uses no external LLM,
+judge, embedding download, or automatic gold approval. The deterministic
+extractive answerer remains the trusted baseline.
+
 The model remains tiny, educational, CPU-oriented, and unoptimized. Every
 neural-network gradient is manually implemented; there is no PyTorch, autograd,
 or external training framework.
@@ -317,27 +356,40 @@ establish implementation behavior, not general language understanding,
 paper-assistance capability, or retrieval quality. No external LLM, API,
 embedding model, vector database, or web search is used.
 
-## Local paper Review Lab
+## Local Paper Training Lab
 
-A narrow human-in-the-loop interface is now available ahead of the broader
-application milestone. It supports:
+The human-in-the-loop interface supports:
 
 - local PDF, Markdown, and UTF-8 text submission
 - an indexed paper library with exact extracted source
 - deterministic scholarly summaries, notation, methods, experiments,
   limitations, and reproduction-checklist views
-- evidence-scoped questions using the trusted cited extractive answer path
+- one-, multi-, or all-paper questions using the trusted cited extractive path
 - visible source passages and page/line citations
-- audience-specific review for PhD/professor, undergraduate, and high-school/
-  beginner readers
-- structured verdicts, pedagogical issue labels, review notes, and corrected
-  answers
-- repository-local feedback snapshots that Codex can inspect in a later task
+- adaptive depth, mathematical, style, format, critique, comparison, and
+  simplification instructions without a mandatory audience selector
+- 40–80 diverse candidate questions per paper plus arbitrary manual prompts
+- one-click execution of every non-rejected question for a paper, with a
+  transparent deterministic first-pass review queue
+- five review labels, evidence replacement, required/prohibited facts, and
+  corrected answers
+- a separate human approval gate and paper-split dataset export
+- local progress, diversity, and evaluation dashboards
 
 The Review Lab binds only to `127.0.0.1`; browser assets, papers, indexes,
-interactions, and reviews stay on the machine. Feedback is **not automatic
-training**. It is saved as a review queue so proposed changes can be checked
-against paper evidence and applied deliberately.
+interactions, and reviews stay on the machine. In-memory conversation state is
+not persisted unless preferences are explicitly opted in. Feedback is **not
+automatic training**. Generated questions, prompt variations, and corrections
+remain proposed until a reviewer approves them.
+
+The Auto-review page checks citation validity, evidence sufficiency, query and
+comparison coverage, and expected abstention behavior, then proposes editable
+labels and correction fields. It is not an LLM judge and cannot establish
+semantic correctness. Nothing is recorded as the user's review until the user
+explicitly saves the batch, and saved items still require separate approval on
+the Corrections page before dataset export. Per-question execution failures are
+kept as non-saveable diagnostics instead of aborting later questions, and older
+failed batches can resume from their first unfinished question.
 
 Install the optional local PDF adapter and launch from the repository root:
 
@@ -349,8 +401,26 @@ localml-scholar-review
 Open `http://127.0.0.1:8765`. Uploaded files are limited to 30 MiB.
 Image-only/scanned PDFs require OCR before ingestion. PDF extraction remains
 text-only and cannot interpret figures, visual equations, or complex layout.
-See [the local review application guide](docs/local_review_app.md) for storage,
-privacy, workflow, and feedback semantics.
+See [the Paper Training Lab guide](docs/training/paper_training_lab.md),
+[adaptive profile specification](docs/training/adaptive_instruction_profiles.md),
+[dataset schema guide](docs/training/grounded_instruction_dataset.md), and
+[paper-split policy](docs/training/paper_level_data_splits.md).
+
+Batch workflows use the same approval boundary:
+
+```bash
+python3 -m localml_scholar.evaluation.cli generate-paper-questions \
+  --index outputs/review_app/index.json --paper PAPER_ID --count 60 \
+  --output questions.json
+python3 -m localml_scholar.evaluation.cli run-review-set \
+  --index outputs/review_app/index.json --paper PAPER_ID \
+  --questions questions.json --output review_results.json
+python3 -m localml_scholar.evaluation.cli export-training-data \
+  --reviews outputs/review_app/corrections.json --approved-only \
+  --output approved_dataset.json
+python3 -m localml_scholar.evaluation.cli dataset-report \
+  --dataset approved_dataset.json
+```
 
 ## Installation
 
@@ -427,6 +497,12 @@ citation-valid/relevance disagreement, deterministic audience rendering,
 multi-label failures, selective review, correction export, aggregate/grouped
 metrics, resumption, regression comparison, CLI workflows, the unapproved
 Attention-paper starter, and refusal to fabricate a real-paper run.
+Milestone 12A adds deterministic adaptive-instruction conflicts, local session
+privacy, one/multi-paper scope, exact 80-prompt Attention coverage, balanced
+40–80 candidate generation, proposed-only variations, provenance validation,
+alternative-evidence replacement, five-way review, separate correction
+approval, approved-only export, cross-paper split coalescing, diversity
+warnings, CLI batches, and the complete loopback HTTP workflow.
 
 ### Verified implementation
 
@@ -605,12 +681,66 @@ validity/support/relevance/coverage of `1.0`, answer relevance `0.825`, and
 required-concept recall `0.5`. It correctly surfaced
 `retrieval_wrong_section` and `required_concept_missing` instead of hiding
 them behind the perfect citation scores. The review queue contained that
-failure, one cited human correction exported successfully, all 33
-Attention-paper starters remained proposed, and eight controlled
+failure, one cited human correction exported successfully, all original 33
+Attention-paper starters remained proposed at that milestone, and eight controlled
 retriever/answer-method runs completed. Invoking the real-paper experiment
 without a benchmark/index exited with status 2 and created no fabricated
 result. These are authored-fixture implementation checks, not real-paper
 quality or semantic-correctness claims.
+
+Milestone 12A was verified on 2026-08-01 with:
+
+```bash
+python3 -m ruff check .
+python3 -m ruff format --check .
+python3 -m pytest -q
+node --check src/localml_scholar/review_app/static/app.js
+python3 -m localml_scholar.evaluation.cli --help
+python3 -m localml_scholar.review_app.server --help
+python3 -c "import localml_scholar; print(localml_scholar.__version__)"
+git diff --check
+```
+
+Ruff reported no lint or formatting errors, JavaScript syntax validation and
+both CLI help paths succeeded, `git diff --check` was clean, package version
+`1.2.0` imported correctly, and the latest full run reported
+`738 passed in 18.89s`. Coverage includes adaptive profiles, 80-question
+coverage, question/correction approval boundaries, provenance, conversations,
+multi-paper scope, paper-level splits, diversity, batch CLIs, legacy interaction
+normalization, transparent automatic-review proposals, editable batch
+finalization, and loopback API integration. These validate deterministic
+workflow behavior, not answer quality or model capability.
+
+The end-to-end curation smoke indexed one authored Markdown paper, generated
+40 candidates with all statuses still `proposed`, inferred an undergraduate
+and concise instruction profile, produced a cited non-abstaining extractive
+answer, required separate correction approval, exported exactly one approved
+example to a manually held-out test split, and reported no paper-level leakage.
+This validates the curation boundary only; no model was trained.
+
+Milestone 12A.1 was verified on 2026-08-04 with:
+
+```bash
+python3 -m ruff check .
+python3 -m ruff format --check .
+node --check src/localml_scholar/review_app/static/app.js
+git diff --check
+python3 -m pytest -q
+PYTHONPATH=src python3 -m localml_scholar.evaluation.cli --help
+PYTHONPATH=src python3 -m localml_scholar.evaluation.cli auto-review --help
+PYTHONPATH=src python3 -m localml_scholar.evaluation.cli audit-sample --help
+PYTHONPATH=src python3 -c "import localml_scholar; print(localml_scholar.__version__)"
+```
+
+Ruff lint and formatting, JavaScript syntax, and `git diff --check` were clean;
+the complete suite reported `771 passed in 16.59s`; and version `1.2.1`
+imported correctly. A temporary full-workflow smoke indexed one authored local
+Markdown paper, ran one answer through both review passes, correctly remained
+`calibration_required`/`needs_human_review`, saved one explicit human review,
+approved its correction, exported one `human-and-audited` example, and selected
+one deterministic audit item. The smoke used a temporary directory and did not
+alter the user's corpus or tracked outputs. These checks validate workflow and
+policy behavior, not semantic review quality.
 
 The 55-parameter deterministic attention inspection reported exact tensor
 shapes, scaled scores, the causal mask, probabilities, synthetic loss, and
@@ -1261,7 +1391,8 @@ src/localml_scholar/
   answering/              Evidence, answer methods, citations, validation, CLI
   scholarly/              Cited paper extraction, artifacts, comparison, CLI
   evaluation/             Gold benchmarks, graders, reports, review, CLI
-  review_app/             Loopback paper/question/feedback interface
+  training_data/          Adaptive profiles, corrections, splits, datasets
+  review_app/             Loopback Paper Training Lab and JSON API
   optimizers.py           Milestone 1 compatibility SGD
   generation.py           Bigram and transformer autoregressive sampling
   serialization.py        Atomic NPZ and text persistence
@@ -1406,9 +1537,9 @@ Mathematical details are in:
 
 The next recommended milestone is:
 
-> Use the human-approved correction dataset to train and evaluate the custom
-> transformer for grounded scholarly instruction following, with deterministic
-> extractive rendering retained as the trusted baseline.
+> Milestone 12B: grounded instruction tuning and model comparison using
+> human-approved training examples, with paper-level held-out evaluation and
+> deterministic extractive answering retained as the trusted baseline.
 
 See [the full roadmap](docs/roadmap.md) and
 [the architecture](docs/architecture.md).

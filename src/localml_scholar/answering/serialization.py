@@ -74,7 +74,13 @@ def load_grounded_answer(
         raise ValueError("Grounded answer artifact keys are malformed.")
     if state["answer_format_version"] != ANSWER_FORMAT_VERSION:
         raise ValueError("Unsupported grounded answer format version.")
-    if state["package_version"] != __version__:
+    if state["package_version"] not in {
+        "1.0.0",
+        "1.1.0",
+        "1.1.1",
+        "1.2.0",
+        __version__,
+    }:
         raise ValueError("Grounded answer package version is incompatible.")
     if state["artifact_type"] != "grounded_answer":
         raise ValueError("Grounded answer artifact type is incompatible.")

@@ -13,7 +13,8 @@ python3 -m localml_scholar.evaluation.cli generate-candidates \
   --review-report outputs/evaluation/candidates.md
 ```
 
-Create the 33-question untrusted Attention-paper starter:
+Create the expanded untrusted Attention-paper starter (the original 33 plus
+all specified Milestone 12A prompts):
 
 ```bash
 python3 -m localml_scholar.evaluation.cli attention-starter \
@@ -73,3 +74,24 @@ python3 -m localml_scholar.evaluation.cli compare \
 `--resume` accepts only an identical run ID, benchmark/index identity, and
 configuration. Completed question records are reused exactly.
 
+## Milestone 12A.1 review governance
+
+The workspace commands reuse the localhost service's atomic state and never
+download papers:
+
+```bash
+python3 -m localml_scholar.evaluation.cli auto-review \
+  --repository . --paper PAPER_ID
+python3 -m localml_scholar.evaluation.cli auto-review \
+  --repository . --all-pending
+python3 -m localml_scholar.evaluation.cli audit-sample \
+  --repository . --rate 0.10 --seed 42
+python3 -m localml_scholar.evaluation.cli calibration-report --repository .
+python3 -m localml_scholar.evaluation.cli export-trust-tier \
+  --repository . --trust-tier human-and-audited \
+  --output outputs/review_app/trusted_dataset.json
+```
+
+The default trust tier includes human approvals and human-audited Codex
+approvals. `include-codex-approved` is explicit. Automatic approval stays
+locked until calibration qualifies and a human enables it.

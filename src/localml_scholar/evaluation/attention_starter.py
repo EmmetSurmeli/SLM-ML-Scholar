@@ -11,6 +11,7 @@ from localml_scholar.evaluation.schemas import (
     GoldEvidence,
 )
 from localml_scholar.retrieval import RetrievalIndex, SearchFilters
+from localml_scholar.training_data.questions import ATTENTION_QUESTIONS
 
 _STARTER_QUESTIONS: tuple[dict[str, Any], ...] = (
     {
@@ -227,6 +228,41 @@ _STARTER_QUESTIONS: tuple[dict[str, Any], ...] = (
     },
 )
 
+_QUESTION_TYPE_BRIDGE = {
+    "method": "main_method",
+    "complexity": "methodology",
+    "critical_reasoning": "interpretation",
+    "external_context": "external_context_required",
+    "teaching": "synthesis",
+    "derivation": "equation",
+    "counterfactual": "interpretation",
+}
+_existing_prompts = {item["question"] for item in _STARTER_QUESTIONS}
+_STARTER_QUESTIONS += tuple(
+    {
+        "question": question,
+        "type": _QUESTION_TYPE_BRIDGE.get(question_type, question_type),
+        "sections": (),
+        "concepts": (),
+        "sufficiency": (
+            "external_required"
+            if question_type == "external_context"
+            else "insufficient"
+            if question_type == "insufficient_evidence"
+            else "sufficient"
+        ),
+        "answerability": (
+            "external_sources_required"
+            if question_type == "external_context"
+            else "unanswerable"
+            if question_type == "insufficient_evidence"
+            else "paper_answerable"
+        ),
+    }
+    for question, question_type in ATTENTION_QUESTIONS
+    if question not in _existing_prompts
+)
+
 
 def generate_attention_starter_benchmark(
     index: RetrievalIndex,
@@ -234,7 +270,7 @@ def generate_attention_starter_benchmark(
     *,
     benchmark_version: str = "0.1-attention-candidates",
 ) -> Benchmark:
-    """Bind 33 review prompts to candidate evidence from one local paper index."""
+    """Bind the expanded untrusted review prompts to one local paper index."""
     if not isinstance(index, RetrievalIndex):
         raise TypeError("index must be RetrievalIndex.")
     documents = {item.document_id: item for item in index.documents}

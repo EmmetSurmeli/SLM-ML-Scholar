@@ -574,7 +574,13 @@ class RetrievalIndex:
                 raise ValueError(
                     "Legacy retrieval index package version is incompatible."
                 )
-        elif values["package_version"] not in {"1.0.0", __version__}:
+        elif values["package_version"] not in {
+            "1.0.0",
+            "1.1.0",
+            "1.1.1",
+            "1.2.0",
+            __version__,
+        }:
             raise ValueError("Retrieval index package version is incompatible.")
         for name in ("documents", "chunks", "vocabulary", "term_frequencies"):
             if not isinstance(values[name], list):

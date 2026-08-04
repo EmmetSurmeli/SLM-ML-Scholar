@@ -64,3 +64,20 @@ def load_json_list(path: Path) -> list[dict[str, Any]]:
     if not isinstance(value, list) or not all(isinstance(item, dict) for item in value):
         raise ValueError(f"State file must contain a JSON list of objects: {path}")
     return value
+
+
+def load_json_object(
+    path: Path, *, default: dict[str, Any] | None = None
+) -> dict[str, Any]:
+    """Load a JSON object, returning a defensive copy of ``default`` if absent."""
+    if not path.exists():
+        return {} if default is None else dict(default)
+    try:
+        value = json.loads(path.read_text(encoding="utf-8"))
+    except UnicodeDecodeError as error:
+        raise ValueError(f"State file is not valid UTF-8: {path}") from error
+    except json.JSONDecodeError as error:
+        raise ValueError(f"State file is not valid JSON: {path}") from error
+    if not isinstance(value, dict):
+        raise ValueError(f"State file must contain a JSON object: {path}")
+    return value

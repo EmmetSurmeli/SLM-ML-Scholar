@@ -85,6 +85,12 @@ from localml_scholar.tokenizer import (
 )
 from localml_scholar.training.config import TransformerTrainingConfig
 from localml_scholar.training.transformer import TransformerTrainer
+from localml_scholar.training_data import (
+    GroundedInstructionDataset,
+    GroundedInstructionExample,
+    InstructionProfile,
+    infer_instruction_profile,
+)
 
 __all__ = [
     "BigramLanguageModel",
@@ -115,9 +121,13 @@ __all__ = [
     "GroundedAnswer",
     "GroundedAnswerPipeline",
     "GroundedGenerativeAnswerer",
+    "GroundedInstructionDataset",
+    "GroundedInstructionExample",
     "HybridRetrievalConfig",
     "HumanReviewRecord",
     "IndexConfig",
+    "infer_instruction_profile",
+    "InstructionProfile",
     "ingest_file",
     "ingest_files",
     "ingest_markdown",

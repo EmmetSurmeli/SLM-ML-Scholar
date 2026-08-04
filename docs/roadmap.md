@@ -270,7 +270,8 @@ Status: complete.
 
 - source/index-bound human-approved benchmark schemas
 - deterministic scholarly candidate generation and explicit review decisions
-- 33-question untrusted *Attention Is All You Need* starter
+- original 33-question untrusted *Attention Is All You Need* starter (expanded
+  with all 80 specified prompts in Milestone 12A)
 - retrieval, section, boilerplate, sufficiency, relevance, concept,
   prohibited-claim, citation, completeness, abstention, and audience grades
 - one cited structured target with three deterministic audience renderers
@@ -285,10 +286,6 @@ The automated signals remain heuristics. They do not prove semantic
 correctness, and proposed questions or unreviewed corrections are never
 treated as gold/training data.
 
-The next recommended milestone is:
-
-> Use the human-approved correction dataset to train and evaluate the custom transformer for grounded scholarly instruction following, with deterministic extractive rendering retained as the trusted baseline.
-
 ## Deferred — Correctness reference
 
 Only after the independent implementation works:
@@ -302,7 +299,53 @@ Only after the independent implementation works:
 
 The reference must not become the source of the manual implementation.
 
-## Milestone 12 — Grounded scholarly explanation training
+## Milestone 12A — Paper Training Lab and grounded dataset curation
+
+Status: complete and verified.
+
+- loopback-only paper corpus, Ask, Benchmarks, Review, Corrections, Dataset,
+  and Evaluation workflows
+- deterministic 40–80 question generation per paper and an expanded untrusted
+  *Attention Is All You Need* pool containing all 80 specified prompts
+- arbitrary user-authored and multi-paper questions
+- adaptive instruction profiles inferred from prompts, recent turns, opt-in
+  preferences, and explicit overrides
+- separate evidence scope and presentation interpretation
+- provenance-labelled facts and derivations (`paper_explicit`,
+  `mathematical_inference`, `external_knowledge`, `uncertain`)
+- proposed-only automatic questions, variations, and correction suggestions
+- explicit human approval before dataset inclusion
+- paper-level train/validation/test splits, cross-paper coalescing, and prompt-
+  variation leakage checks
+- dataset diversity diagnostics and 100/300/600 review-throughput targets
+- CLI batch generation, baseline runs, approved-only export, and reports
+
+This milestone curates data but performs no model training or fine-tuning. It
+does not call an external LLM, download papers, or automatically approve gold
+facts.
+
+The next recommended milestone is:
+
+> Milestone 12B: grounded instruction tuning and model comparison using human-approved training examples, with paper-level held-out evaluation and deterministic extractive answering retained as the trusted baseline.
+
+## Milestone 12A.1 — Confidence-gated auto-review and audit sampling
+
+Status: complete in package 1.2.1, pending real-corpus calibration.
+
+The Paper Training Lab now performs a second pass with three explicitly
+correlated deterministic reviewer configurations, 16 non-compensating gates,
+mandatory human routes, correction revalidation, provenance/circularity
+checks, deterministic audit sampling, calibration state, duplicate clusters,
+and provenance-weighted trust-tier exports. Automatic approval is disabled by
+default and cannot be enabled until at least 50 paired human outcomes meet the
+policy and a human explicitly enables it.
+
+Before Milestone 12B, calibrate on 50–100 examples, inspect every mandatory-risk
+route, audit at least 10%, confirm held-out paper isolation, and build a legally
+usable corpus with preserved source licenses. Codex approval remains distinct
+from human gold.
+
+## Milestone 12B — Grounded scholarly explanation training
 
 Status: planned.
 

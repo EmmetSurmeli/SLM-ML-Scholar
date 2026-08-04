@@ -98,6 +98,14 @@ class ReviewRequestHandler(BaseHTTPRequestHandler):
             if parsed.path == "/api/state":
                 self._json(self.service.state())
                 return
+            if parsed.path == "/api/questions":
+                query = parse_qs(parsed.query)
+                self._json(
+                    self.service.list_questions(
+                        paper_id=query.get("paper_id", [None])[0]
+                    )
+                )
+                return
             if parsed.path.startswith("/api/papers/") and parsed.path.endswith(
                 "/analysis"
             ):
@@ -132,12 +140,292 @@ class ReviewRequestHandler(BaseHTTPRequestHandler):
                 )
                 self._json(result, HTTPStatus.CREATED)
                 return
+            if parsed.path == "/api/sessions":
+                request = self._read_json()
+                result = self.service.create_session(
+                    selected_paper_ids=tuple(request.get("selected_paper_ids", [])),
+                    preferences=request.get("preferences"),
+                    persist_preferences=request.get("persist_preferences", False),
+                )
+                self._json(result, HTTPStatus.CREATED)
+                return
+            if parsed.path.startswith("/api/sessions/"):
+                session_id = unquote(parsed.path.removeprefix("/api/sessions/")).strip(
+                    "/"
+                )
+                request = self._read_json()
+                selected = request.get("selected_paper_ids")
+                result = self.service.update_session(
+                    session_id,
+                    selected_paper_ids=(None if selected is None else tuple(selected)),
+                    preferences=request.get("preferences"),
+                    persist_preferences=request.get("persist_preferences"),
+                )
+                self._json(result)
+                return
+            if parsed.path.startswith("/api/papers/") and parsed.path.endswith(
+                "/questions/generate"
+            ):
+                paper_id = unquote(
+                    parsed.path.removeprefix("/api/papers/").removesuffix(
+                        "/questions/generate"
+                    )
+                ).strip("/")
+                request = self._read_json()
+                result = self.service.generate_questions(
+                    paper_id=paper_id,
+                    count=request.get("count", 60),
+                )
+                self._json(result, HTTPStatus.CREATED)
+                return
+            if parsed.path == "/api/questions/manual":
+                request = self._read_json()
+                result = self.service.add_question(
+                    question=request.get("question"),
+                    paper_ids=tuple(request.get("paper_ids", [])),
+                    question_type=request.get("question_type", "user_authored"),
+                )
+                self._json(result, HTTPStatus.CREATED)
+                return
+            if parsed.path == "/api/evidence/search":
+                request = self._read_json()
+                result = self.service.search_evidence(
+                    query=request.get("query"),
+                    paper_ids=tuple(request.get("paper_ids", [])),
+                    top_k=request.get("top_k", 10),
+                )
+                self._json(result)
+                return
+            if parsed.path == "/api/automation/run":
+                request = self._read_json()
+                question_ids = request.get("question_ids")
+                result = self.service.run_automatic_review_batch(
+                    paper_ids=tuple(request.get("paper_ids", [])),
+                    question_ids=(
+                        None if question_ids is None else tuple(question_ids)
+                    ),
+                    generate_if_empty=request.get("generate_if_empty", True),
+                    generated_question_count=request.get(
+                        "generated_question_count", 60
+                    ),
+                    uncertain_only=request.get("uncertain_only", False),
+                )
+                self._json(result, HTTPStatus.CREATED)
+                return
+            if parsed.path == "/api/automation/audit-sample":
+                request = self._read_json()
+                result = self.service.create_audit_sample(
+                    sample_fraction=request.get("sample_fraction", 0.10),
+                    seed=request.get("seed", 42),
+                )
+                self._json(result, HTTPStatus.CREATED)
+                return
+            if parsed.path == "/api/automation/enable":
+                request = self._read_json()
+                self._json(
+                    self.service.set_auto_approval_enabled(
+                        enabled=request.get("enabled")
+                    )
+                )
+                return
+            if parsed.path.startswith(
+                "/api/automation/reviews/"
+            ) and parsed.path.endswith("/rerun"):
+                review_id = unquote(
+                    parsed.path.removeprefix("/api/automation/reviews/").removesuffix(
+                        "/rerun"
+                    )
+                ).strip("/")
+                self._read_json()
+                self._json(self.service.rerun_automatic_review(review_id))
+                return
+            if parsed.path.startswith(
+                "/api/automation/batches/"
+            ) and parsed.path.endswith("/finalize"):
+                batch_id = unquote(
+                    parsed.path.removeprefix("/api/automation/batches/").removesuffix(
+                        "/finalize"
+                    )
+                ).strip("/")
+                request = self._read_json()
+                result = self.service.finalize_automatic_review_batch(
+                    batch_id=batch_id,
+                    reviewer=request.get("reviewer"),
+                    decisions=request.get("decisions"),
+                )
+                self._json(result)
+                return
+            if parsed.path.startswith(
+                "/api/automation/batches/"
+            ) and parsed.path.endswith("/resume"):
+                batch_id = unquote(
+                    parsed.path.removeprefix("/api/automation/batches/").removesuffix(
+                        "/resume"
+                    )
+                ).strip("/")
+                result = self.service.resume_automatic_review_batch(batch_id)
+                self._json(result)
+                return
+            if parsed.path.startswith(
+                "/api/automation/batches/"
+            ) and parsed.path.endswith("/stop"):
+                batch_id = unquote(
+                    parsed.path.removeprefix("/api/automation/batches/").removesuffix(
+                        "/stop"
+                    )
+                ).strip("/")
+                self._read_json()
+                self._json(self.service.stop_automatic_review_batch(batch_id))
+                return
+            if parsed.path.startswith("/api/questions/") and parsed.path.endswith(
+                "/run"
+            ):
+                question_id = unquote(
+                    parsed.path.removeprefix("/api/questions/").removesuffix("/run")
+                ).strip("/")
+                request = self._read_json()
+                result = self.service.run_question(
+                    question_id,
+                    session_id=request.get("session_id"),
+                )
+                self._json(result, HTTPStatus.CREATED)
+                return
+            if parsed.path.startswith("/api/questions/") and parsed.path.endswith(
+                "/review"
+            ):
+                question_id = unquote(
+                    parsed.path.removeprefix("/api/questions/").removesuffix("/review")
+                ).strip("/")
+                request = self._read_json()
+                concepts = request.get("required_concepts")
+                prohibited = request.get("prohibited_claims")
+                result = self.service.review_question(
+                    question_id=question_id,
+                    review_status=request.get("review_status"),
+                    required_concepts=(None if concepts is None else tuple(concepts)),
+                    prohibited_claims=(
+                        None if prohibited is None else tuple(prohibited)
+                    ),
+                )
+                self._json(result)
+                return
+            if parsed.path.startswith("/api/questions/") and parsed.path.endswith(
+                "/variations"
+            ):
+                question_id = unquote(
+                    parsed.path.removeprefix("/api/questions/").removesuffix(
+                        "/variations"
+                    )
+                ).strip("/")
+                self._read_json()
+                result = self.service.propose_question_variations(question_id)
+                self._json(result, HTTPStatus.CREATED)
+                return
             if parsed.path == "/api/questions":
                 request = self._read_json()
+                document_ids = request.get("document_ids")
                 result = self.service.ask(
                     question=request.get("question"),
                     document_id=request.get("document_id"),
-                    audience_level=request.get("audience_level", "undergraduate"),
+                    document_ids=(
+                        None if document_ids is None else tuple(document_ids)
+                    ),
+                    audience_level=request.get("audience_level"),
+                    session_id=request.get("session_id"),
+                    instruction_overrides=request.get("instruction_overrides"),
+                )
+                self._json(result, HTTPStatus.CREATED)
+                return
+            if parsed.path.startswith("/api/interactions/") and parsed.path.endswith(
+                "/review"
+            ):
+                interaction_id = unquote(
+                    parsed.path.removeprefix("/api/interactions/").removesuffix(
+                        "/review"
+                    )
+                ).strip("/")
+                request = self._read_json()
+                replacement = request.get("replacement_evidence_ids")
+                result = self.service.review_interaction(
+                    interaction_id=interaction_id,
+                    review_label=request.get("review_label"),
+                    corrected_answer=request.get("corrected_answer"),
+                    required_facts=tuple(request.get("required_facts", [])),
+                    prohibited_claims=tuple(request.get("prohibited_claims", [])),
+                    replacement_evidence_ids=(
+                        None if replacement is None else tuple(replacement)
+                    ),
+                    notes=request.get("notes", ""),
+                )
+                self._json(result, HTTPStatus.CREATED)
+                return
+            if parsed.path.startswith("/api/corrections/") and parsed.path.endswith(
+                "/approve"
+            ):
+                example_id = unquote(
+                    parsed.path.removeprefix("/api/corrections/").removesuffix(
+                        "/approve"
+                    )
+                ).strip("/")
+                request = self._read_json()
+                result = self.service.approve_correction(
+                    example_id=example_id,
+                    reviewer=request.get("reviewer"),
+                    final_answer=request.get("final_answer"),
+                )
+                self._json(result)
+                return
+            if parsed.path.startswith("/api/corrections/") and parsed.path.endswith(
+                "/edit"
+            ):
+                example_id = unquote(
+                    parsed.path.removeprefix("/api/corrections/").removesuffix("/edit")
+                ).strip("/")
+                request = self._read_json()
+                result = self.service.edit_correction(
+                    example_id=example_id,
+                    final_answer=request.get("final_answer"),
+                )
+                self._json(result)
+                return
+            if parsed.path.startswith("/api/corrections/") and parsed.path.endswith(
+                "/audit"
+            ):
+                example_id = unquote(
+                    parsed.path.removeprefix("/api/corrections/").removesuffix("/audit")
+                ).strip("/")
+                request = self._read_json()
+                self._json(
+                    self.service.audit_codex_approval(
+                        example_id=example_id,
+                        reviewer=request.get("reviewer"),
+                        passed=request.get("passed"),
+                    )
+                )
+                return
+            if parsed.path.startswith("/api/corrections/") and parsed.path.endswith(
+                "/reject"
+            ):
+                example_id = unquote(
+                    parsed.path.removeprefix("/api/corrections/").removesuffix(
+                        "/reject"
+                    )
+                ).strip("/")
+                request = self._read_json()
+                result = self.service.reject_correction(
+                    example_id=example_id,
+                    reviewer=request.get("reviewer"),
+                    reason=request.get("reason", ""),
+                )
+                self._json(result)
+                return
+            if parsed.path == "/api/dataset/export":
+                request = self._read_json()
+                result = self.service.export_training_dataset(
+                    output=request.get("output"),
+                    seed=request.get("seed", 0),
+                    manual_paper_splits=request.get("manual_paper_splits"),
+                    trust_tier=request.get("trust_tier", "human-and-audited"),
                 )
                 self._json(result, HTTPStatus.CREATED)
                 return
@@ -183,7 +471,7 @@ def create_server(
 
 def _parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
-        description="Run the localhost-only LocalML Scholar review lab."
+        description="Run the localhost-only LocalML Scholar Paper Training Lab."
     )
     parser.add_argument(
         "--repository",
@@ -200,8 +488,8 @@ def main() -> None:
     arguments = _parser().parse_args()
     service = ReviewService(arguments.repository)
     server = create_server(service, port=arguments.port)
-    print(f"LocalML Scholar Review Lab: http://127.0.0.1:{server.server_port}")
-    print(f"Feedback file: {service.feedback_path}")
+    print(f"LocalML Scholar Paper Training Lab: http://127.0.0.1:{server.server_port}")
+    print(f"Local workspace: {service.output_directory}")
     print("Press Ctrl+C to stop.")
     try:
         server.serve_forever()

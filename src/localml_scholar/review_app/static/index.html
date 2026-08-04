@@ -1,276 +1,150 @@
 <!doctype html>
 <html lang="en">
-  <head>
-    <meta charset="utf-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1">
-    <meta
-      name="description"
-      content="A private, localhost-only paper review workspace for LocalML Scholar."
-    >
-    <title>LocalML Scholar — Review Lab</title>
-    <link rel="stylesheet" href="/styles.css">
-    <script src="/app.js" defer></script>
-  </head>
-  <body>
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>LocalML Scholar — Paper Training Lab</title>
+  <link rel="stylesheet" href="/styles.css">
+</head>
+<body>
+  <aside class="rail">
+    <div class="brand">
+      <span class="brand-mark">LS</span>
+      <div><strong>LocalML Scholar</strong><small>Paper Training Lab</small></div>
+    </div>
+    <nav aria-label="Primary">
+      <button class="nav-link active" data-view="papers">Papers <span id="paper-count">0</span></button>
+      <button class="nav-link" data-view="ask">Ask</button>
+      <button class="nav-link" data-view="benchmarks">Benchmarks <span id="question-count">0</span></button>
+      <button class="nav-link" data-view="automation">Auto-review <span id="automation-count">0</span></button>
+      <button class="nav-link" data-view="review">Review <span id="review-count">0</span></button>
+      <button class="nav-link" data-view="corrections">Corrections <span id="correction-count">0</span></button>
+      <button class="nav-link" data-view="dataset">Dataset</button>
+      <button class="nav-link" data-view="evaluation">Evaluation</button>
+    </nav>
+    <div class="local-note"><span class="status-dot"></span><strong>Local only</strong><p>No cloud calls. No automatic training.</p></div>
+  </aside>
+
+  <main>
     <header class="topbar">
-      <a class="brand" href="/" aria-label="LocalML Scholar review lab">
-        <span class="brand-mark">LS</span>
-        <span>
-          <strong>LocalML Scholar</strong>
-          <small>Review Lab</small>
-        </span>
-      </a>
-      <div class="privacy-pill">
-        <span class="pulse" aria-hidden="true"></span>
-        Local only · no cloud
-      </div>
+      <div><p class="eyebrow">MILESTONE 12A · HUMAN-IN-THE-LOOP</p><h1 id="view-title">Paper corpus</h1></div>
+      <div class="top-actions"><span id="status" role="status">Ready</span><button id="refresh" class="secondary">Refresh</button></div>
     </header>
 
-    <main class="workspace">
-      <aside class="sidebar" aria-label="Paper library">
-        <section>
-          <div class="section-heading">
-            <div>
-              <p class="eyebrow">Workspace</p>
-              <h1>Your paper library</h1>
-            </div>
-            <span class="count" id="paper-count">0</span>
-          </div>
+    <section class="view active" id="view-papers">
+      <div class="hero-grid">
+        <article class="panel upload-panel">
+          <p class="panel-kicker">01 · REGISTER SOURCE</p>
+          <h2>Add a technical paper</h2>
+          <p>PDF, UTF-8 text, or Markdown. Extraction and indexing stay on this machine.</p>
+          <form id="upload-form">
+            <label>Paper file<input id="paper-file" type="file" accept=".pdf,.txt,.md,.markdown" required></label>
+            <label>Title override <span>optional</span><input id="paper-title" placeholder="Use extracted title"></label>
+            <button type="submit">Add and index paper</button>
+          </form>
+        </article>
+        <article class="panel corpus-panel">
+          <p class="panel-kicker">CORPUS STATUS</p>
+          <div class="metric-row"><div><strong id="metric-papers">0</strong><span>papers</span></div><div><strong id="metric-questions">0</strong><span>questions</span></div><div><strong id="metric-approved">0</strong><span>approved examples</span></div></div>
+          <div id="progress-mini" class="progress-list"></div>
+        </article>
+      </div>
+      <div class="section-heading"><div><p class="eyebrow">LOCAL CORPUS</p><h2>Indexed papers</h2></div><p>Select papers here to set the scope used in Ask.</p></div>
+      <div id="paper-list" class="paper-grid empty"><p>No papers indexed yet.</p></div>
+      <article id="paper-inspector" class="panel inspector hidden"></article>
+    </section>
 
-          <label class="dropzone" id="dropzone" for="paper-file">
-            <input
-              id="paper-file"
-              type="file"
-              accept=".pdf,.txt,.md,.markdown,application/pdf,text/plain,text/markdown"
-            >
-            <span class="upload-symbol" aria-hidden="true">↑</span>
-            <strong>Drop a paper here</strong>
-            <span>or choose PDF, Markdown, or text</span>
-            <small>PDF text is extracted locally. 30 MiB limit.</small>
-          </label>
-          <div class="upload-progress hidden" id="upload-progress" role="status">
-            <span class="spinner" aria-hidden="true"></span>
-            <span>Reading and indexing the paper…</span>
-          </div>
-        </section>
+    <section class="view" id="view-ask">
+      <div class="workspace-grid">
+        <aside class="panel scope-panel"><p class="panel-kicker">EVIDENCE SCOPE</p><h2>Selected papers</h2><div id="ask-paper-scope"></div><p class="microcopy">Style never changes the evidence search. A comparison warns when a selected source supplies no evidence.</p></aside>
+        <article class="panel ask-panel">
+          <p class="panel-kicker">ADAPTIVE INSTRUCTION</p><h2>Ask naturally</h2>
+          <p>Say “explain simply,” “derive step by step,” “compare,” or specify your background directly. No audience selector is required.</p>
+          <form id="ask-form"><textarea id="question" rows="5" placeholder="Example: I know linear algebra but not attention. Explain the equation, then critique its assumptions." required></textarea><div class="form-actions"><button type="submit">Run grounded answer</button><button type="button" class="secondary" id="clear-conversation">New conversation</button></div></form>
+          <div id="conversation" class="conversation empty"><p>Your local conversation will appear here.</p></div>
+        </article>
+      </div>
+    </section>
 
-        <nav class="paper-list" id="paper-list" aria-label="Indexed papers">
-          <div class="empty-sidebar">
-            Add your first paper to begin.
-          </div>
-        </nav>
+    <section class="view" id="view-benchmarks">
+      <div class="section-heading"><div><p class="eyebrow">CANDIDATE GENERATION</p><h2>Build a diverse review pool</h2></div><p>All generated and varied prompts remain proposed until you approve them.</p></div>
+      <div class="workspace-grid equal">
+        <form id="generate-form" class="panel"><h3>Generate for a paper</h3><label>Paper<select id="generate-paper" required></select></label><label>Candidate count <span>40–80</span><input id="generate-count" type="number" min="40" max="80" value="60"></label><button type="submit">Generate candidates</button></form>
+        <form id="manual-question-form" class="panel"><h3>Add an arbitrary question</h3><label>Question<textarea id="manual-question" rows="3" required></textarea></label><label>Type<input id="manual-type" value="user_authored"></label><button type="submit">Add proposed question</button></form>
+      </div>
+      <div class="toolbar"><select id="question-paper-filter"><option value="">All papers</option></select><select id="question-status-filter"><option value="">All statuses</option><option>proposed</option><option>human_approved</option><option>human_rejected</option><option>ambiguous</option><option>benchmark_problem</option></select><span id="question-summary"></span></div>
+      <div id="benchmark-list" class="review-list"></div>
+    </section>
 
-        <section class="feedback-status">
-          <div>
-            <p class="eyebrow">Manual review</p>
-            <strong><span id="feedback-count">0</span> feedback records</strong>
-          </div>
-          <button class="text-button" id="show-storage" type="button">
-            Storage paths
-          </button>
-        </section>
-      </aside>
+    <section class="view" id="view-automation">
+      <div class="section-heading"><div><p class="eyebrow">BATCH FIRST PASS</p><h2>Run everything, then review the review</h2></div><p>The local reviewer drafts judgments from visible evidence and diagnostics. Nothing becomes your review until you save it.</p></div>
+      <div class="workspace-grid equal">
+        <form id="automation-form" class="panel">
+          <p class="panel-kicker">01 · CHOOSE SCOPE</p><h3>Ask all questions</h3>
+          <label>Paper<select id="automation-paper" required></select></label>
+          <label>Questions to generate if this paper has none <span>40–80</span><input id="automation-count-input" type="number" min="40" max="80" value="60"></label>
+          <label class="scope-item"><input id="automation-uncertain-only" type="checkbox"> Re-review only previously uncertain items</label>
+          <button type="submit">Run all and draft reviews</button>
+          <p class="microcopy">Existing non-rejected questions are used. If none exist, the lab generates the requested number first. Large batches may take a moment.</p>
+        </form>
+        <article class="panel">
+          <p class="panel-kicker">WHAT GETS AUTOMATED</p><h3>Transparent—not a hidden judge</h3>
+          <ul><li>Runs the cited extractive answer for every question.</li><li>Checks abstention, sufficiency, citations, claim support, query coverage, and comparison completeness.</li><li>Proposes a label, required facts, retained evidence, and corrected answer.</li><li>Flags explanatory answers that still need synthesis.</li></ul>
+          <p class="warning">Drafts are not human reviews and are never automatically approved as training examples.</p>
+        </article>
+      </div>
+      <article class="panel">
+        <p class="panel-kicker">SECOND-PASS SAFETY</p><h3>Calibration and audit controls</h3>
+        <div id="auto-policy-metrics"></div>
+        <div class="form-actions"><button type="button" class="secondary" id="create-audit-sample">Create 10% audit sample</button><button type="button" class="secondary" id="enable-auto-approval">Enable automatic approval</button></div>
+        <p class="microcopy">Approval remains locked until at least 50 human outcomes meet every calibration threshold and you explicitly enable it. Three local reviewer profiles are correlated configurations, not independent agents.</p>
+      </article>
+      <div class="section-heading"><div><p class="eyebrow">02 · FINAL CHECK</p><h2>Review the proposed reviews</h2></div><p>Edit any draft, exclude it, or explicitly save the selected drafts as your reviews.</p></div>
+      <div id="automatic-batches"></div>
+    </section>
 
-      <section class="main-panel">
-        <div class="welcome" id="welcome">
-          <div class="welcome-card">
-            <p class="eyebrow">Grounded paper reading</p>
-            <h2>Read closely. Ask precisely. Correct the system.</h2>
-            <p>
-              Add a locally stored paper, ask questions against its indexed
-              evidence, and save your assessment with the exact answer snapshot.
-            </p>
-            <ol class="workflow">
-              <li><span>1</span><div><strong>Add</strong><small>PDF or prepared text</small></div></li>
-              <li><span>2</span><div><strong>Ask</strong><small>Evidence-scoped questions</small></div></li>
-              <li><span>3</span><div><strong>Review</strong><small>Citations and extracted details</small></div></li>
-              <li><span>4</span><div><strong>Correct</strong><small>Queue feedback for Codex</small></div></li>
-            </ol>
-            <p class="caution">
-              Current answers are deterministic and extractive. They quote and
-              assemble relevant passages; they do not yet provide expert-quality
-              free-form explanations.
-            </p>
-          </div>
-        </div>
+    <section class="view" id="view-review">
+      <div class="section-heading"><div><p class="eyebrow">HUMAN JUDGMENT</p><h2>Review answers and evidence</h2></div><p>Failures and risky reasoning are prioritized above metadata.</p></div>
+      <div id="review-list" class="review-list"></div>
+      <article id="review-editor" class="panel hidden">
+        <p class="panel-kicker">CORRECTION EDITOR</p><h3 id="review-question"></h3><div id="review-answer" class="answer-box"></div>
+        <form id="review-form">
+          <input id="review-interaction-id" type="hidden">
+          <fieldset><legend>Human label</legend><div class="choice-row"><label><input type="radio" name="review-label" value="correct" checked> Correct</label><label><input type="radio" name="review-label" value="partial"> Partial</label><label><input type="radio" name="review-label" value="incorrect"> Incorrect</label><label><input type="radio" name="review-label" value="should_abstain"> Should abstain</label><label><input type="radio" name="review-label" value="benchmark_problem"> Benchmark problem</label></div></fieldset>
+          <label>Evidence to retain<div id="review-evidence" class="evidence-checks"></div></label>
+          <div class="form-actions"><input id="evidence-query" aria-label="Find replacement evidence" placeholder="Search selected papers for replacement evidence"><button type="button" class="secondary" id="find-evidence">Find evidence</button></div>
+          <div id="alternative-evidence" class="evidence-checks"></div>
+          <label>Required facts <span>one per line</span><textarea id="required-facts" rows="3"></textarea></label>
+          <label>Prohibited claims <span>one per line</span><textarea id="prohibited-claims" rows="2"></textarea></label>
+          <label>Corrected answer<textarea id="corrected-answer" rows="6"></textarea></label>
+          <label>Reviewer notes<textarea id="review-notes" rows="3"></textarea></label>
+          <button type="submit">Save correction proposal</button>
+          <p class="microcopy">This saves a suggestion only. It cannot enter the training dataset until a separate approval.</p>
+        </form>
+      </article>
+    </section>
 
-        <div class="paper-workspace hidden" id="paper-workspace">
-          <header class="paper-header">
-            <div>
-              <p class="eyebrow" id="paper-source">Paper</p>
-              <h2 id="paper-title">Untitled paper</h2>
-              <div class="paper-stats" id="paper-stats"></div>
-            </div>
-            <span class="status-chip">Indexed</span>
-          </header>
+    <section class="view" id="view-corrections">
+      <div class="section-heading"><div><p class="eyebrow">APPROVAL GATE</p><h2>Correction candidates</h2></div><p>Inspect the final answer and provenance before approval.</p></div>
+      <div id="correction-list" class="review-list"></div>
+    </section>
 
-          <section class="ask-card">
-            <div class="ask-heading">
-              <label for="question">Ask this paper</label>
-              <span>Audience level is saved with the interaction</span>
-            </div>
-            <fieldset class="audience-options" id="question-audience">
-              <legend>Who should the eventual explanation be for?</legend>
-              <label>
-                <input type="radio" name="question-audience" value="researcher">
-                <span>
-                  <strong>PhD / professor</strong>
-                  <small>Technical precision, assumptions, and research nuance</small>
-                </span>
-              </label>
-              <label>
-                <input type="radio" name="question-audience" value="undergraduate" checked>
-                <span>
-                  <strong>Undergraduate</strong>
-                  <small>Course-level math with concepts explained clearly</small>
-                </span>
-              </label>
-              <label>
-                <input type="radio" name="question-audience" value="beginner">
-                <span>
-                  <strong>High school / beginner</strong>
-                  <small>Plain language, prerequisites, and careful intuition</small>
-                </span>
-              </label>
-            </fieldset>
-            <p class="audience-note">
-              The current extractive baseline records this target but does not
-              rewrite its cited passages by level yet. Your feedback will guide
-              that future behavior.
-            </p>
-            <div class="question-box">
-              <textarea
-                id="question"
-                rows="3"
-                maxlength="4000"
-                placeholder="What assumptions does this method make?"
-              ></textarea>
-              <button class="primary-button" id="ask-button" type="button">
-                Ask with citations
-              </button>
-            </div>
-            <div class="prompt-row" aria-label="Suggested questions">
-              <button type="button" data-prompt="Explain the main method and its assumptions.">Main method</button>
-              <button type="button" data-prompt="What datasets, metrics, and baselines are used?">Experiments</button>
-              <button type="button" data-prompt="What limitations does the paper state?">Limitations</button>
-              <button type="button" data-prompt="Turn the paper into a reproduction checklist.">Reproduce</button>
-            </div>
-          </section>
+    <section class="view" id="view-dataset">
+      <div class="workspace-grid equal">
+        <article class="panel"><p class="panel-kicker">TRUST-TIER EXPORT</p><h2>Grounded instruction dataset</h2><p>Exports are versioned, deduplicated, and split at the paper level. Pending and rejected records are excluded.</p><label>Trust tier<select id="dataset-trust-tier"><option value="human-and-audited">Human + audited automation (default)</option><option value="human-only">Human only</option><option value="include-codex-approved">Include all Codex-approved</option></select></label><button id="export-dataset">Export current dataset</button><pre id="dataset-output" class="code-block">No export yet.</pre></article>
+        <article class="panel"><p class="panel-kicker">DIVERSITY CHECK</p><h2>Composition warnings</h2><div id="dataset-warnings"></div><div id="dataset-metrics"></div></article>
+      </div>
+    </section>
 
-          <section class="answer-card hidden" id="answer-card" aria-live="polite">
-            <div class="answer-heading">
-              <div>
-                <p class="eyebrow">Evidence-grounded response</p>
-                <h3 id="answer-question"></h3>
-              </div>
-              <div class="status-stack">
-                <span class="audience-chip" id="answer-audience"></span>
-                <span class="answer-status" id="answer-status"></span>
-              </div>
-            </div>
-            <div class="answer-text" id="answer-text"></div>
-            <div class="evidence-grid" id="evidence-grid"></div>
+    <section class="view" id="view-evaluation">
+      <div class="section-heading"><div><p class="eyebrow">REVIEW PROGRESS</p><h2>Evidence-backed quality program</h2></div><p>Workflow targets are not performance claims.</p></div>
+      <div id="progress-dashboard" class="target-grid"></div>
+      <article class="panel"><h3>Current boundaries</h3><ul><li>The extractive system remains the trusted deterministic baseline.</li><li>No model is trained or fine-tuned by this lab.</li><li>Automatic grades and corrections are diagnostic suggestions.</li><li>Paper-held-out evaluation is required before capability claims.</li></ul></article>
+    </section>
+  </main>
 
-            <div class="feedback-panel">
-              <div class="feedback-intro">
-                <div>
-                  <p class="eyebrow">Teach through review</p>
-                  <h3>How did this answer do?</h3>
-                </div>
-                <span>Saved for later Codex review — not automatic training</span>
-              </div>
-              <fieldset class="audience-options feedback-audience" id="feedback-audience">
-                <legend>Judge this answer for which audience?</legend>
-                <label>
-                  <input type="radio" name="feedback-audience" value="researcher">
-                  <span><strong>PhD / professor</strong></span>
-                </label>
-                <label>
-                  <input type="radio" name="feedback-audience" value="undergraduate">
-                  <span><strong>Undergraduate</strong></span>
-                </label>
-                <label>
-                  <input type="radio" name="feedback-audience" value="beginner">
-                  <span><strong>High school / beginner</strong></span>
-                </label>
-                <small>
-                  You can save separate reviews of the same answer for different
-                  audiences.
-                </small>
-              </fieldset>
-              <fieldset class="verdict-options">
-                <legend class="sr-only">Answer verdict</legend>
-                <label><input type="radio" name="verdict" value="correct"><span>Correct</span></label>
-                <label><input type="radio" name="verdict" value="partially_correct"><span>Partly correct</span></label>
-                <label><input type="radio" name="verdict" value="incorrect"><span>Incorrect</span></label>
-              </fieldset>
-              <fieldset class="issue-options" id="issue-options">
-                <legend>What needs attention?</legend>
-                <label><input type="checkbox" value="wrong_answer"><span>Wrong answer</span></label>
-                <label><input type="checkbox" value="missing_evidence"><span>Missing evidence</span></label>
-                <label><input type="checkbox" value="incorrect_citation"><span>Incorrect citation</span></label>
-                <label><input type="checkbox" value="missed_equation"><span>Missed equation</span></label>
-                <label><input type="checkbox" value="missing_method_detail"><span>Missing method detail</span></label>
-                <label><input type="checkbox" value="extraction_error"><span>Extraction error</span></label>
-                <label><input type="checkbox" value="too_advanced"><span>Too advanced</span></label>
-                <label><input type="checkbox" value="too_basic"><span>Too basic</span></label>
-                <label><input type="checkbox" value="missing_prerequisite"><span>Missing prerequisite</span></label>
-                <label><input type="checkbox" value="unclear_explanation"><span>Unclear explanation</span></label>
-                <label><input type="checkbox" value="other"><span>Other</span></label>
-              </fieldset>
-              <div class="feedback-fields">
-                <label>
-                  Your corrected answer <span>optional</span>
-                  <textarea id="corrected-answer" rows="3" maxlength="20000" placeholder="Write what a better answer should say…"></textarea>
-                </label>
-                <label>
-                  Review notes <span>optional</span>
-                  <textarea id="feedback-notes" rows="3" maxlength="10000" placeholder="Point out the precise error, missed page, or reasoning gap…"></textarea>
-                </label>
-              </div>
-              <button class="secondary-button" id="save-feedback" type="button">
-                Save feedback for Codex
-              </button>
-              <span class="save-state" id="feedback-save-state" role="status"></span>
-            </div>
-          </section>
-
-          <section class="analysis-card">
-            <div class="tab-list" role="tablist" aria-label="Paper analysis">
-              <button class="active" role="tab" aria-selected="true" data-tab="overview">Overview</button>
-              <button role="tab" aria-selected="false" data-tab="equations">Equations & notation</button>
-              <button role="tab" aria-selected="false" data-tab="methods">Methods & experiments</button>
-              <button role="tab" aria-selected="false" data-tab="checklist">Reproduction checklist</button>
-              <button role="tab" aria-selected="false" data-tab="source">Extracted source</button>
-            </div>
-            <div class="analysis-body" id="analysis-body">
-              <div class="analysis-loading">
-                <span class="spinner" aria-hidden="true"></span>
-                <span>Building deterministic paper analysis…</span>
-              </div>
-            </div>
-          </section>
-        </div>
-      </section>
-    </main>
-
-    <dialog id="storage-dialog">
-      <form method="dialog">
-        <div class="dialog-heading">
-          <div>
-            <p class="eyebrow">Private persistence</p>
-            <h2>Local storage paths</h2>
-          </div>
-          <button class="close-button" aria-label="Close" value="close">×</button>
-        </div>
-        <p>
-          These ignored repository files remain on this computer. In a later
-          Codex task, ask to review the feedback file and adjust the system.
-        </p>
-        <dl id="storage-paths"></dl>
-      </form>
-    </dialog>
-
-    <div class="toast" id="toast" role="alert" aria-live="assertive"></div>
-  </body>
+  <div id="toast" role="alert" aria-live="assertive"></div>
+  <footer class="visually-hidden">Save feedback for Codex through the human review workflow.</footer>
+  <script src="/app.js" defer></script>
+</body>
 </html>

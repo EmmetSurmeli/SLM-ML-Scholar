@@ -30,6 +30,16 @@ def test_citation_parser_rejects_malformed_syntax(text: str) -> None:
         parse_inline_citations(text)
 
 
+def test_citation_parser_does_not_absorb_an_unmatched_source_bracket() -> None:
+    text = "arXiv:1406.2661v1 [stat. [C1]"
+
+    occurrences = parse_inline_citations(text)
+
+    assert len(occurrences) == 1
+    assert occurrences[0].labels == ("C1",)
+    assert occurrences[0].raw_text == "[C1]"
+
+
 def test_valid_exact_source_claim_is_accepted(
     grounded_index: RetrievalIndex,
 ) -> None:

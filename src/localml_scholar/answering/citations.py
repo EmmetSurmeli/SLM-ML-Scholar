@@ -7,7 +7,7 @@ from dataclasses import dataclass
 
 _LABEL = r"C[1-9]\d*"
 _CITATION_PATTERN = re.compile(rf"\[(?P<labels>{_LABEL}(?:\s*,\s*{_LABEL})*)\]")
-_CITATION_LIKE_PATTERN = re.compile(r"\[[^\]\n]*C\d*[^\]\n]*\]|\[\s*C\d*")
+_CITATION_LIKE_START = re.compile(r"\[\s*C(?=\s*(?:\d|,|\]|$))")
 
 
 @dataclass(frozen=True)
@@ -35,7 +35,6 @@ def parse_inline_citations(
     if not isinstance(strict, bool):
         raise TypeError("strict must be boolean.")
     occurrences: list[CitationOccurrence] = []
-    valid_spans: list[tuple[int, int]] = []
     for match in _CITATION_PATTERN.finditer(text):
         labels = tuple(dict.fromkeys(re.split(r"\s*,\s*", match.group("labels"))))
         occurrences.append(
@@ -46,16 +45,19 @@ def parse_inline_citations(
                 raw_text=match.group(0),
             )
         )
-        valid_spans.append(match.span())
     if strict:
-        for candidate in _CITATION_LIKE_PATTERN.finditer(text):
-            if not any(
-                start <= candidate.start() and candidate.end() <= end
-                for start, end in valid_spans
-            ):
+        for start_match in _CITATION_LIKE_START.finditer(text):
+            start = start_match.start()
+            line_end = text.find("\n", start)
+            if line_end == -1:
+                line_end = len(text)
+            closing = text.find("]", start, line_end)
+            end = line_end if closing == -1 else closing + 1
+            candidate = text[start:end]
+            if not _CITATION_PATTERN.fullmatch(candidate):
                 raise CitationSyntaxError(
                     "Malformed inline citation syntax at character "
-                    f"{candidate.start()}: {candidate.group(0)!r}."
+                    f"{start}: {candidate!r}."
                 )
     return tuple(occurrences)
 

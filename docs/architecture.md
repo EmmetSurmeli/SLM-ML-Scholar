@@ -81,6 +81,10 @@ extend:
   selective review, correction export, regression comparison, reports, and
   the evaluation CLI. It composes retrieval/answering/scholarly artifacts but
   does not alter their mathematics.
+- `training_data/` owns adaptive instruction profiles, local conversation
+  schemas, proposed-only paper questions and prompt variations, provenance-
+  labelled grounded targets, correction approval, paper-level splits,
+  diversity diagnostics, and approved-only dataset artifacts.
 - `models/` composes primitives into checkpointable models.
 - `optimizers.py` remains the Milestone 1 named-array SGD compatibility path.
 - `generation.py` owns bigram and tokenizer-aware transformer autoregressive
@@ -126,6 +130,53 @@ The feedback queue is intentionally not an online-learning channel. A saved
 review cannot mutate retrieval, answer logic, or model parameters. Later work
 must validate the review against its captured evidence and convert accepted
 cases into explicitly licensed data or committed regression fixtures.
+
+## Paper Training Lab and instruction-data boundary
+
+Milestone 12A expands the narrow Review Lab into a local curation workbench:
+
+```text
+one / several / all indexed papers
+        ├── exact evidence scope ─────────→ retrieval + cited baseline answer
+        └── prompt + recent local turns ──→ adaptive InstructionProfile
+                                               ↓
+                                  reviewable interaction snapshot
+                         ┌─────────────────────┴─────────────────────┐
+                         ↓                                           ↓
+              individual human review                  deterministic batch draft
+                                                                     ↓
+                                                        explicit user save/exclude
+                         └─────────────────────┬─────────────────────┘
+                                               ↓
+ question/answer/evidence/provenance edits → proposed correction
+                                               ↓ explicit separate approval
+                                     human_approved example
+                                               ↓
+                         paper-level split + diversity validation
+                                               ↓
+                           versioned GroundedInstructionDataset
+```
+
+The two top branches are intentionally independent: presentation signals do
+not change source selection or sufficiency. Cross-paper interactions retain
+all selected paper identities and record sources absent from the returned
+evidence. Missing comparison evidence produces an incomplete-comparison flag,
+not fabricated content.
+
+Browser sessions are in memory by default. Stored preferences require explicit
+opt-in. Generated questions, correction suggestions, and prompt variations
+are structurally `proposed`; no code path automatically converts them to
+`human_approved`. Approved dataset export groups every example and prompt
+variation by paper, coalesces connected cross-paper examples, and rejects split
+leakage.
+
+Automatic review batches are orchestration records, not model judgments. They
+run existing non-rejected questions through the same extractive path and use
+visible abstention, citation, sufficiency, query-coverage, comparison-coverage,
+and question-type checks to propose editable labels. The batch records
+`semantic_judge_used=false`; it cannot become a human review without an
+explicit reviewer save, and that save still produces only a proposed
+correction. This preserves the existing separate approval boundary.
 
 ## Current real-paper evaluation architecture
 
@@ -420,7 +471,7 @@ every decoder block, and the vocabulary head. `number_of_heads` is part of the
 complete checkpointed configuration. The public state loader validates every
 key, shape, dtype, and finite value before changing any parameter.
 
-The 1.1.1 package retains the 0.7.0 model schema. Its loaders recognize 0.5.0
+The 1.2.0 package retains the 0.7.0 model schema. Its loaders recognize 0.5.0
 and 0.6.0 model checkpoints plus 0.5.1 and 0.6.0 full training checkpoints.
 Single-head legacy configuration migration still adds `number_of_heads=1` in
 memory. Legacy character vocabularies migrate into the unified tokenizer
@@ -636,6 +687,39 @@ Limitations are architectural: there is no OCR, visual PDF layout recovery,
 figure/chart interpretation, arbitrary table reconstruction, external metadata
 lookup, learned classifier, neural scholarly extraction, literature-wide
 search, or novelty verification.
+
+## Confidence-gated review architecture
+
+Milestone 12A.1 keeps review as a data-governance layer outside both the NumPy
+transformer and retrieval system:
+
+```text
+immutable local paper + retrieved evidence + candidate answer
+                         |
+                 deterministic first pass
+                         |
+       evidence-strict / answer-strict / policy-strict
+            (correlated configurations, not agents)
+                         |
+       16 gates + mandatory-human categories + calibration
+                  /              |             \
+       Codex decision    human review     audit queue
+                  \              |             /
+             provenance + duplicate clustering
+                         |
+          explicit weighted trust-tier export
+```
+
+The reviewer re-examines the original artifact rather than trusting first-pass
+scores. Approval requires unanimous profile gates and enabled calibration.
+Human and Codex states remain separate in storage. Review ancestry and source/
+answer hashes block circular same-system decisions from trusted-gold exports.
+Auto-review never changes a paper split, and explicit test-only records are
+rejected from training exports.
+
+The site has no process-level facility for independent Codex agents, so it
+does not claim independence. It makes no web calls and cannot discover or
+download papers.
 
 ## Future module constraints
 

@@ -166,7 +166,19 @@ class TransformerTrainer:
     """Own deterministic sampler, optimizer, metrics, and full training state."""
 
     CHECKPOINT_VERSION = 3
-    LEGACY_CHECKPOINT_IDENTITIES = frozenset({(1, "0.5.1"), (2, "0.6.0")})
+    LEGACY_CHECKPOINT_IDENTITIES = frozenset(
+        {
+            (1, "0.5.1"),
+            (2, "0.6.0"),
+            (3, "0.7.0"),
+            (3, "0.8.0"),
+            (3, "0.9.0"),
+            (3, "1.0.0"),
+            (3, "1.1.0"),
+            (3, "1.1.1"),
+            (3, "1.2.0"),
+        }
+    )
 
     def __init__(
         self,

@@ -1,540 +1,469 @@
 "use strict";
 
-const state = {
-  papers: [],
-  storage: {},
-  selectedPaper: null,
-  analysis: null,
-  activeTab: "overview",
+const app = {
+  state: null,
+  selectedPapers: new Set(),
+  sessionId: null,
   currentInteraction: null,
 };
 
-const audienceLabels = {
-  researcher: "PhD / professor",
-  undergraduate: "Undergraduate",
-  beginner: "High school / beginner",
-};
-
-const elements = {
-  fileInput: document.querySelector("#paper-file"),
-  dropzone: document.querySelector("#dropzone"),
-  uploadProgress: document.querySelector("#upload-progress"),
-  paperCount: document.querySelector("#paper-count"),
-  paperList: document.querySelector("#paper-list"),
-  feedbackCount: document.querySelector("#feedback-count"),
-  welcome: document.querySelector("#welcome"),
-  workspace: document.querySelector("#paper-workspace"),
-  paperSource: document.querySelector("#paper-source"),
-  paperTitle: document.querySelector("#paper-title"),
-  paperStats: document.querySelector("#paper-stats"),
-  question: document.querySelector("#question"),
-  askButton: document.querySelector("#ask-button"),
-  answerCard: document.querySelector("#answer-card"),
-  answerQuestion: document.querySelector("#answer-question"),
-  answerText: document.querySelector("#answer-text"),
-  answerStatus: document.querySelector("#answer-status"),
-  answerAudience: document.querySelector("#answer-audience"),
-  evidenceGrid: document.querySelector("#evidence-grid"),
-  analysisBody: document.querySelector("#analysis-body"),
-  saveFeedback: document.querySelector("#save-feedback"),
-  feedbackSaveState: document.querySelector("#feedback-save-state"),
-  correctedAnswer: document.querySelector("#corrected-answer"),
-  feedbackNotes: document.querySelector("#feedback-notes"),
-  storageDialog: document.querySelector("#storage-dialog"),
-  storagePaths: document.querySelector("#storage-paths"),
-  toast: document.querySelector("#toast"),
-};
-
-function escapeHtml(value) {
-  const node = document.createElement("div");
-  node.textContent = String(value ?? "");
-  return node.innerHTML;
-}
+const $ = (selector) => document.querySelector(selector);
+const $$ = (selector) => [...document.querySelectorAll(selector)];
+const escapeHtml = (value) => String(value ?? "").replace(/[&<>'"]/g, (char) => ({
+  "&": "&amp;", "<": "&lt;", ">": "&gt;", "'": "&#39;", '"': "&quot;",
+})[char]);
 
 async function api(path, options = {}) {
   const response = await fetch(path, options);
-  const payload = await response.json().catch(() => ({}));
-  if (!response.ok) {
-    throw new Error(payload.error || `Request failed (${response.status}).`);
-  }
+  const payload = await response.json().catch(() => ({ error: "Invalid server response." }));
+  if (!response.ok) throw new Error(payload.error || `Request failed (${response.status}).`);
   return payload;
 }
 
-let toastTimer = null;
-function toast(message, isError = false) {
-  clearTimeout(toastTimer);
-  elements.toast.textContent = message;
-  elements.toast.classList.toggle("error", isError);
-  elements.toast.classList.add("visible");
-  toastTimer = setTimeout(() => elements.toast.classList.remove("visible"), 4200);
+function toast(message, error = false) {
+  const node = $("#toast");
+  node.textContent = message;
+  node.className = error ? "show error" : "show";
+  window.setTimeout(() => { node.className = ""; }, 3500);
 }
 
-function metric(value, singular, plural = `${singular}s`) {
-  return `${value.toLocaleString()} ${value === 1 ? singular : plural}`;
+function busy(message) { $("#status").textContent = message; }
+function lines(value) { return value.split("\n").map((item) => item.trim()).filter(Boolean); }
+function paperTitle(id) {
+  return app.state.papers.find((paper) => paper.document_id === id)?.title || id;
+}
+function paperIds(item) {
+  if (Array.isArray(item?.paper_ids)) return item.paper_ids;
+  if (typeof item?.document_id === "string" && item.document_id) return [item.document_id];
+  if (typeof item?.paper_id === "string" && item.paper_id) return [item.paper_id];
+  return [];
 }
 
-function selectedRadio(name) {
-  return document.querySelector(`input[name="${name}"]:checked`)?.value;
+const viewTitles = {
+  papers: "Paper corpus", ask: "Grounded conversation", benchmarks: "Benchmark workshop",
+  automation: "Automatic first-pass review", review: "Answer review",
+  corrections: "Correction approval", dataset: "Instruction dataset",
+  evaluation: "Evaluation dashboard",
+};
+
+function showView(name) {
+  $$(".nav-link").forEach((node) => node.classList.toggle("active", node.dataset.view === name));
+  $$(".view").forEach((node) => node.classList.toggle("active", node.id === `view-${name}`));
+  $("#view-title").textContent = viewTitles[name];
 }
 
-function renderPaperList() {
-  elements.paperCount.textContent = state.papers.length;
-  if (!state.papers.length) {
-    elements.paperList.innerHTML =
-      '<div class="empty-sidebar">Add your first paper to begin.</div>';
+function renderProgress(container, progress) {
+  container.innerHTML = progress.targets.map((target) => `
+    <div>
+      <div class="progress-label"><span>${target.count} approved</span><span>${Math.round(target.progress * 100)}%</span></div>
+      <div class="progress-bar"><i style="width:${Math.round(target.progress * 100)}%"></i></div>
+    </div>`).join("");
+}
+
+function renderPapers() {
+  const papers = app.state.papers;
+  const automaticPaper = $("#automation-paper").value;
+  const list = $("#paper-list");
+  if (!papers.length) {
+    list.className = "paper-grid empty";
+    list.innerHTML = "<p>No papers indexed yet.</p>";
+  } else {
+    list.className = "paper-grid";
+    list.innerHTML = papers.map((paper) => `
+      <article class="paper-card">
+        <label class="paper-select"><input type="checkbox" data-select-paper="${escapeHtml(paper.document_id)}" ${app.selectedPapers.has(paper.document_id) ? "checked" : ""}><span><h3>${escapeHtml(paper.title)}</h3><span class="paper-meta">${escapeHtml(paper.source_name)}</span></span></label>
+        <p class="paper-meta">${paper.section_count} sections · ${paper.chunk_count} chunks · ${paper.character_count.toLocaleString()} characters<br>${paper.benchmark_question_count} questions · ${paper.reviewed_answer_count} answers · ${paper.correction_count} corrections</p>
+        <div class="paper-actions"><button data-inspect-paper="${escapeHtml(paper.document_id)}">Inspect</button><button class="secondary" data-generate-paper="${escapeHtml(paper.document_id)}">Generate 60</button></div>
+      </article>`).join("");
+  }
+  const options = papers.map((paper) => `<option value="${escapeHtml(paper.document_id)}">${escapeHtml(paper.title)}</option>`).join("");
+  $("#generate-paper").innerHTML = options || '<option value="">Add a paper first</option>';
+  $("#automation-paper").innerHTML = options || '<option value="">Add a paper first</option>';
+  if (papers.some((paper) => paper.document_id === automaticPaper)) {
+    $("#automation-paper").value = automaticPaper;
+  }
+  $("#question-paper-filter").innerHTML = '<option value="">All papers</option>' + options;
+  renderScope();
+}
+
+function renderScope() {
+  const scope = $("#ask-paper-scope");
+  if (!app.state.papers.length) { scope.innerHTML = '<p class="microcopy">Add a paper first.</p>'; return; }
+  scope.innerHTML = `
+    <div class="form-actions"><button type="button" class="secondary" id="select-all">All</button><button type="button" class="secondary" id="select-none">None</button></div>
+    ${app.state.papers.map((paper) => `<label class="scope-item"><input type="checkbox" data-scope-paper="${escapeHtml(paper.document_id)}" ${app.selectedPapers.has(paper.document_id) ? "checked" : ""}>${escapeHtml(paper.title)}</label>`).join("")}`;
+  $("#select-all").onclick = () => { app.state.papers.forEach((paper) => app.selectedPapers.add(paper.document_id)); renderPapers(); };
+  $("#select-none").onclick = () => { app.selectedPapers.clear(); renderPapers(); };
+}
+
+function profileChips(profile) {
+  if (!profile) return "";
+  const values = [profile.assumed_background, profile.desired_depth, profile.mathematical_depth + " math", profile.output_format];
+  if (profile.include_derivation) values.push("derivation");
+  if (profile.include_critique) values.push("critique");
+  if (profile.include_comparison) values.push("comparison");
+  return `<div class="profile-chips">${values.map((item) => `<span class="chip">${escapeHtml(item)}</span>`).join("")}</div>`;
+}
+
+function evidenceCards(evidence = []) {
+  return `<div class="evidence-list">${evidence.map((item) => `
+    <div class="evidence-card"><strong>[${escapeHtml(item.label)}] ${escapeHtml(item.title || item.source_name)}</strong><br>${escapeHtml(item.selected_text)}</div>`).join("")}</div>`;
+}
+
+function renderConversation() {
+  const interactions = app.state.interactions || [];
+  const container = $("#conversation");
+  if (!interactions.length) { container.className = "conversation empty"; container.innerHTML = "<p>Your local conversation will appear here.</p>"; return; }
+  container.className = "conversation";
+  container.innerHTML = interactions.slice(0, 12).reverse().map((item) => `
+    <article class="turn user"><header><strong>You</strong><span>${escapeHtml(item.created_at)}</span></header><div>${escapeHtml(item.question)}</div></article>
+    <article class="turn assistant"><header><strong>LocalML Scholar</strong><span>${item.answer.abstained ? "abstained" : `${item.answer.evidence?.length || 0} evidence items`}</span></header>
+      <div class="answer-text">${escapeHtml(item.answer.answer_text)}</div>${profileChips(item.instruction_profile)}
+      <div class="profile-chips"><span class="chip">citation coverage ${Math.round((item.diagnostics?.citation_coverage || 0) * 100)}%</span><span class="chip">query coverage ${Math.round((item.diagnostics?.query_term_coverage || 0) * 100)}%</span>${(item.diagnostics?.failure_categories || []).map((failure) => `<span class="chip">${escapeHtml(failure)}</span>`).join("")}</div>
+      ${item.comparison?.warning ? `<p class="warning">${escapeHtml(item.comparison.warning)}</p>` : ""}
+      ${evidenceCards(item.answer.evidence)}
+      <div class="paper-actions"><button data-open-review="${escapeHtml(item.interaction_id)}">Review this answer</button></div>
+    </article>`).join("");
+}
+
+function renderQuestions() {
+  const paperFilter = $("#question-paper-filter").value;
+  const statusFilter = $("#question-status-filter").value;
+  const items = (app.state.questions || []).filter((item) =>
+    (!paperFilter || paperIds(item).includes(paperFilter)) && (!statusFilter || item.review_status === statusFilter));
+  $("#question-summary").textContent = `${items.length} shown`;
+  $("#benchmark-list").innerHTML = items.length ? items.map((item) => `
+    <article class="review-card">
+      <div><span class="type">${escapeHtml(item.question_type)}</span><br><span class="status-tag ${escapeHtml(item.review_status)}">${escapeHtml(item.review_status)}</span></div>
+      <div><p>${escapeHtml(item.question)}</p><p class="meta">${paperIds(item).map(paperTitle).map(escapeHtml).join(" · ") || "Paper scope unavailable"}${item.parent_question_id ? " · prompt variation" : ""}</p></div>
+      <div class="actions"><button data-run-question="${escapeHtml(item.question_id)}">Run</button><button class="secondary" data-edit-question-target="${escapeHtml(item.question_id)}">Edit target</button><button class="secondary" data-question-status="human_approved" data-question-id="${escapeHtml(item.question_id)}">Approve</button><button class="secondary" data-vary-question="${escapeHtml(item.question_id)}">Vary</button><button class="secondary" data-question-status="human_rejected" data-question-id="${escapeHtml(item.question_id)}">Reject</button></div>
+    </article>`).join("") : '<div class="empty"><p>No questions match this view.</p></div>';
+}
+
+function renderReviewList() {
+  const items = app.state.interactions || [];
+  $("#review-list").innerHTML = items.length ? items.map((item) => `
+    <article class="review-card"><div><span class="type">${escapeHtml(item.question_type || "user question")}</span></div><div><p>${escapeHtml(item.question)}</p><p class="meta">${paperIds(item).map(paperTitle).map(escapeHtml).join(" · ") || "Paper scope unavailable"} · ${item.answer.abstained ? "abstained" : "answered"}</p></div><div class="actions"><button data-open-review="${escapeHtml(item.interaction_id)}">Inspect & label</button></div></article>`).join("") : '<div class="empty"><p>Run a question to create a review item.</p></div>';
+}
+
+const reviewLabels = ["correct", "partial", "incorrect", "should_abstain", "benchmark_problem"];
+
+function renderAutomaticReview(review) {
+  const pending = review.decision === "pending_user_review";
+  const saveable = review.saveable !== false;
+  const editable = pending && saveable;
+  const evidence = Array.isArray(review.answer?.evidence) ? review.answer.evidence : [];
+  const proposedEvidence = new Set(review.final_evidence_ids || review.proposed_evidence_ids || []);
+  const label = review.final_label || review.proposed_label;
+  const correctedAnswer = review.final_corrected_answer ?? review.proposed_corrected_answer ?? "";
+  const requiredFacts = review.final_required_facts || review.proposed_required_facts || [];
+  const prohibitedClaims = review.final_prohibited_claims || review.proposed_prohibited_claims || [];
+  const secondPass = review.second_pass || {};
+  const gateRows = (secondPass.reviewer_results || []).map((result) => {
+    const failed = Object.entries(result.gates || {}).filter(([, passed]) => !passed).map(([name]) => name);
+    return `<li><strong>${escapeHtml(result.reviewer_profile)}</strong> · ${Math.round((result.confidence || 0) * 100)}% · ${failed.length ? `failed: ${failed.map(escapeHtml).join(", ")}` : "all gates passed"}</li>`;
+  }).join("");
+  const decisionText = !saveable
+    ? "Answer failed"
+    : review.decision === "saved_as_user_review"
+    ? "Saved as your review"
+    : review.decision === "excluded_by_user" ? "Excluded" : "Needs your decision";
+  return `
+    <details class="auto-review-card" data-auto-review="${escapeHtml(review.review_id)}" ${pending ? "" : "open"}>
+      <summary>
+        <span class="auto-include-wrap">${pending ? `<input class="auto-include" type="checkbox" ${review.default_selected === false ? "" : "checked"} ${saveable ? "" : "disabled"} aria-label="Include this proposed review">` : ""}</span>
+        <span><strong>${escapeHtml(review.question)}</strong><small>${escapeHtml(review.question_type)} · ${paperIds(review).map(paperTitle).map(escapeHtml).join(" · ")}</small></span>
+        <span class="status-tag ${pending ? "proposed" : "human_approved"}">${escapeHtml(decisionText)}</span>
+      </summary>
+      <div class="auto-review-body">
+        <div class="auto-diagnostics">
+          <span class="chip">confidence ${Math.round((review.proposed_confidence || 0) * 100)}%</span>
+          <span class="chip">citation coverage ${Math.round((review.diagnostics?.citation_coverage || 0) * 100)}%</span>
+          <span class="chip">query coverage ${Math.round((review.diagnostics?.query_term_coverage || 0) * 100)}%</span>
+          ${review.needs_answer_edit ? '<span class="chip attention">answer edit recommended</span>' : ""}
+        </div>
+        <div class="auto-rationale"><strong>Why this draft?</strong><ul>${(review.rationale || []).map((item) => `<li>${escapeHtml(item)}</li>`).join("")}</ul></div>
+        <details class="second-pass-details"><summary>Second-pass decision · ${escapeHtml(secondPass.review_status || "not run")} · ${Math.round((secondPass.confidence || 0) * 100)}%</summary><p>${(secondPass.rationale || []).map(escapeHtml).join(" ")}</p><ul>${gateRows}</ul>${(secondPass.mandatory_human_categories || []).length ? `<p class="warning">Mandatory human review: ${secondPass.mandatory_human_categories.map(escapeHtml).join(", ")}</p>` : ""}<p class="microcopy">Correlated deterministic profiles; not independent reviewers. Provenance hash: ${escapeHtml(secondPass.provenance?.answer_hash || "unavailable")}</p></details>
+        ${pending ? `<button type="button" class="secondary" data-rerun-auto-review="${escapeHtml(review.review_id)}">Send back for re-review</button>` : ""}
+        <label>Review label
+          <select class="auto-label" ${editable ? "" : "disabled"}>${reviewLabels.map((item) => `<option value="${item}" ${item === label ? "selected" : ""}>${item.replaceAll("_", " ")}</option>`).join("")}</select>
+        </label>
+        <div class="auto-answer-comparison">
+          <div><strong>System answer</strong><div class="answer-box">${escapeHtml(review.answer?.answer_text || "")}</div></div>
+          <label>Proposed corrected answer<textarea class="auto-corrected-answer" rows="8" ${editable ? "" : "disabled"}>${escapeHtml(correctedAnswer)}</textarea></label>
+        </div>
+        <div class="auto-draft-fields">
+          <label>Required facts <span>one per line</span><textarea class="auto-required-facts" rows="4" ${editable ? "" : "disabled"}>${escapeHtml(requiredFacts.join("\n"))}</textarea></label>
+          <label>Prohibited claims <span>one per line</span><textarea class="auto-prohibited-claims" rows="4" ${editable ? "" : "disabled"}>${escapeHtml(prohibitedClaims.join("\n"))}</textarea></label>
+        </div>
+        <fieldset class="auto-evidence" ${editable ? "" : "disabled"}><legend>Evidence to retain</legend>
+          ${evidence.length ? evidence.map((item) => {
+            const evidenceId = item.evidence_id || item.chunk_id || item.label;
+            return `<label><input type="checkbox" value="${escapeHtml(evidenceId)}" ${proposedEvidence.has(evidenceId) ? "checked" : ""}><strong>[${escapeHtml(item.label)}]</strong> ${escapeHtml(item.selected_text)}</label>`;
+          }).join("") : '<p class="microcopy">No evidence was selected by the answer.</p>'}
+        </fieldset>
+        ${review.correction_example_id ? `<p class="microcopy">Correction proposal: ${escapeHtml(review.correction_example_id)}</p>` : ""}
+      </div>
+    </details>`;
+}
+
+function renderAutomaticBatches() {
+  const batches = app.state.automatic_review_batches || [];
+  const pending = batches.reduce((total, batch) => total + (batch.summary?.pending_user_review_count || 0), 0);
+  $("#automation-count").textContent = pending;
+  const container = $("#automatic-batches");
+  if (!batches.length) {
+    container.innerHTML = '<div class="empty"><p>No automatic review batch yet. Choose a paper above to run its full question set.</p></div>';
     return;
   }
-  elements.paperList.innerHTML = state.papers
-    .map((paper) => {
-      const active =
-        state.selectedPaper?.document_id === paper.document_id ? " active" : "";
-      const kind = paper.media_type.includes("pdf") ? "PDF" : "TXT";
-      const size = paper.page_count
-        ? metric(paper.page_count, "page")
-        : metric(paper.character_count, "character");
-      return `
-        <button class="paper-list-item${active}" type="button"
-          data-document-id="${escapeHtml(paper.document_id)}">
-          <span class="paper-icon">${kind}</span>
-          <span>
-            <strong>${escapeHtml(paper.title)}</strong>
-            <small>${escapeHtml(size)} · ${paper.chunk_count} passages</small>
-          </span>
-        </button>`;
-    })
-    .join("");
+  container.innerHTML = batches.map((batch, batchIndex) => {
+    const summary = batch.summary || {};
+    const pendingCount = summary.pending_user_review_count || 0;
+    const canFinalize = ["awaiting_user_review", "partially_saved"].includes(batch.status);
+    const controls = pendingCount && canFinalize ? `
+      <div class="auto-finalize-bar">
+        <label>Reviewer name or local identifier<input class="auto-reviewer" placeholder="Example: Emmet" autocomplete="name"></label>
+        <div class="form-actions"><button type="button" data-save-auto-batch="${escapeHtml(batch.batch_id)}">Save selected as my reviews</button><button type="button" class="secondary" data-toggle-auto-batch="${escapeHtml(batch.batch_id)}">Toggle all</button></div>
+        <p class="microcopy">Unchecked drafts are recorded as excluded. Saved items become correction proposals and still need approval on the Corrections page.</p>
+      </div>` : batch.status === "saved" ? `<div class="auto-finalize-bar"><p>This batch is complete. Its saved reviews are correction proposals; inspect and approve them separately.</p><button type="button" data-view="corrections">Open Corrections</button></div>` : ["failed", "stopped"].includes(batch.status) ? `<div class="auto-finalize-bar"><p>This batch stopped early. Its completed drafts are intact; resume from the first unfinished question.</p><button type="button" data-resume-auto-batch="${escapeHtml(batch.batch_id)}">Resume remaining questions</button></div>` : batch.status === "running" ? `<div class="auto-finalize-bar"><p>The batch is processing and saving after each question.</p><button type="button" class="secondary" data-stop-auto-batch="${escapeHtml(batch.batch_id)}">Stop after current question</button></div>` : `<div class="auto-finalize-bar"><p>This batch is unavailable for review.</p></div>`;
+    return `<article class="auto-batch ${batchIndex === 0 ? "latest" : ""}" data-auto-batch="${escapeHtml(batch.batch_id)}">
+      <header><div><p class="panel-kicker">${batchIndex === 0 ? "LATEST BATCH" : "EARLIER BATCH"}</p><h3>${paperIds(batch).map(paperTitle).map(escapeHtml).join(" · ")}</h3><p class="microcopy">${escapeHtml(batch.created_at)} · ${escapeHtml(batch.status.replaceAll("_", " "))} · deterministic local first pass</p></div>
+      <div class="auto-summary"><span><strong>${summary.review_count || 0}</strong> reviewed</span><span><strong>${pendingCount}</strong> awaiting you</span><span><strong>${summary.saved_review_count || 0}</strong> saved</span><span><strong>${summary.execution_error_count || 0}</strong> run errors</span></div></header>
+      ${batch.error ? `<p class="warning">${escapeHtml(batch.error)}</p>` : ""}
+      ${controls}
+      <div class="auto-review-list">${(batch.reviews || []).map(renderAutomaticReview).join("")}</div>
+    </article>`;
+  }).join("");
 }
 
-function renderPaperHeader() {
-  const paper = state.selectedPaper;
-  elements.paperSource.textContent = paper.source_name;
-  elements.paperTitle.textContent = paper.title;
-  const stats = [
-    paper.page_count ? metric(paper.page_count, "page") : null,
-    metric(paper.section_count, "section"),
-    metric(paper.chunk_count, "indexed passage"),
-    metric(paper.character_count, "character"),
-  ].filter(Boolean);
-  elements.paperStats.innerHTML = stats
-    .map((item) => `<span>${escapeHtml(item)}</span>`)
-    .join("");
+function renderAutoPolicy() {
+  const calibration = app.state.calibration || {};
+  const metrics = app.state.second_pass_metrics || {};
+  const audit = app.state.audit_queue || {};
+  $("#auto-policy-metrics").innerHTML = `<div class="metric-row"><div><strong>${metrics.review_count || 0}</strong><span>second-pass reviews</span></div><div><strong>${calibration.example_count || 0}</strong><span>human outcomes</span></div><div><strong>${audit.selected_count || 0}</strong><span>audit queue</span></div></div><p><span class="status-tag ${escapeHtml(calibration.state || "calibration_required")}">${escapeHtml(calibration.state || "calibration_required")}</span> · agreement ${Math.round((calibration.agreement || 0) * 100)}% · override ${Math.round((calibration.override_rate || 0) * 100)}%</p>`;
+  $("#enable-auto-approval").disabled = calibration.state !== "calibration_active";
 }
 
-async function selectPaper(documentId) {
-  const paper = state.papers.find((item) => item.document_id === documentId);
-  if (!paper) return;
-  state.selectedPaper = paper;
-  state.analysis = null;
-  state.currentInteraction = null;
-  state.activeTab = "overview";
-  elements.welcome.classList.add("hidden");
-  elements.workspace.classList.remove("hidden");
-  elements.answerCard.classList.add("hidden");
-  renderPaperList();
-  renderPaperHeader();
-  setActiveTab("overview");
-  elements.analysisBody.innerHTML = `
-    <div class="analysis-loading">
-      <span class="spinner" aria-hidden="true"></span>
-      <span>Building deterministic paper analysis…</span>
-    </div>`;
+function renderCorrections() {
+  const items = app.state.corrections || [];
+  $("#correction-list").innerHTML = items.length ? items.map((item) => `
+    <article class="review-card"><div><span class="type">${escapeHtml(item.review_label)}</span><br><span class="status-tag ${escapeHtml(item.review_status)}">${escapeHtml(item.review_status)}</span></div><div><p>${escapeHtml(item.turns[item.turns.length - 1].content)}</p><p class="meta">${escapeHtml(item.final_answer)}</p></div><div class="actions">${item.review_status === "proposed" ? `<button data-approve-correction="${escapeHtml(item.example_id)}">Human approve</button><button class="secondary" data-edit-correction="${escapeHtml(item.example_id)}">Edit</button><button class="secondary" data-reject-correction="${escapeHtml(item.example_id)}">Human reject</button>` : item.review_status === "codex_approved" ? `<button data-audit-correction="${escapeHtml(item.example_id)}">Audit pass</button><button class="secondary" data-reject-correction="${escapeHtml(item.example_id)}">Override / reject</button>` : ""}</div></article>`).join("") : '<div class="empty"><p>No correction proposals yet.</p></div>';
+}
+
+function renderDataset() {
+  const metrics = app.state.dataset_metrics;
+  const warnings = app.state.dataset_warnings || [];
+  $("#dataset-warnings").innerHTML = warnings.length ? warnings.map((item) => `<p class="warning">${escapeHtml(item)}</p>`).join("") : "<p>No current composition warnings.</p>";
+  $("#dataset-metrics").innerHTML = `<strong>${metrics.example_count}</strong> approved examples across <strong>${metrics.paper_count}</strong> papers<br>${metrics.multi_turn_count} multi-turn · ${metrics.multi_paper_count} cross-paper · ${metrics.abstention_count} abstentions · ${metrics.derivation_count} derivations`;
+  renderProgress($("#progress-mini"), app.state.progress);
+  $("#progress-dashboard").innerHTML = app.state.progress.targets.map((target) => `<article class="target-card"><strong>${target.count}</strong><p>${target.reached ? "Target reached" : `${app.state.progress.approved_examples} approved · ${Math.round(target.progress * 100)}%`}</p><div class="progress-bar"><i style="width:${Math.round(target.progress * 100)}%"></i></div></article>`).join("");
+}
+
+function renderState() {
+  $("#paper-count").textContent = app.state.papers.length;
+  $("#question-count").textContent = app.state.question_count;
+  $("#review-count").textContent = app.state.interaction_count;
+  $("#correction-count").textContent = app.state.correction_count;
+  $("#metric-papers").textContent = app.state.papers.length;
+  $("#metric-questions").textContent = app.state.question_count;
+  $("#metric-approved").textContent = app.state.approved_example_count;
+  renderPapers(); renderConversation(); renderQuestions(); renderAutomaticBatches(); renderAutoPolicy(); renderReviewList(); renderCorrections(); renderDataset();
+}
+
+async function refresh() {
+  busy("Refreshing local state…");
+  app.state = await api("/api/state");
+  const known = new Set(app.state.papers.map((paper) => paper.document_id));
+  app.selectedPapers = new Set([...app.selectedPapers].filter((id) => known.has(id)));
+  if (!app.selectedPapers.size && app.state.papers.length) app.selectedPapers.add(app.state.papers[0].document_id);
+  renderState(); busy("Local state up to date");
+}
+
+async function ensureSession() {
+  if (app.sessionId) return app.sessionId;
+  const session = await api("/api/sessions", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ selected_paper_ids: [...app.selectedPapers], persist_preferences: false }) });
+  app.sessionId = session.session_id;
+  return app.sessionId;
+}
+
+function openReview(interactionId) {
+  const item = app.state.interactions.find((candidate) => candidate.interaction_id === interactionId);
+  if (!item) return;
+  app.currentInteraction = item;
+  showView("review");
+  $("#review-editor").classList.remove("hidden");
+  $("#review-question").textContent = item.question;
+  $("#review-answer").textContent = item.answer.answer_text;
+  $("#review-interaction-id").value = item.interaction_id;
+  $("#corrected-answer").value = item.answer.answer_text;
+  $("#required-facts").value = "";
+  $("#prohibited-claims").value = "";
+  $("#review-notes").value = "";
+  $("#review-evidence").innerHTML = (item.answer.evidence || []).map((evidence) => `<label><input type="checkbox" name="retain-evidence" value="${escapeHtml(evidence.evidence_id || evidence.label)}" checked><strong>[${escapeHtml(evidence.label)}]</strong> ${escapeHtml(evidence.selected_text)}</label>`).join("") || '<p class="microcopy">No evidence was selected.</p>';
+  $("#evidence-query").value = item.question;
+  $("#alternative-evidence").innerHTML = "";
+  $("#review-editor").scrollIntoView({ behavior: "smooth" });
+}
+
+document.addEventListener("click", async (event) => {
+  const nav = event.target.closest("[data-view]"); if (nav) { showView(nav.dataset.view); return; }
+  const selected = event.target.closest("[data-select-paper], [data-scope-paper]");
+  if (selected) {
+    const paperId = selected.dataset.selectPaper || selected.dataset.scopePaper;
+    selected.checked ? app.selectedPapers.add(paperId) : app.selectedPapers.delete(paperId);
+    renderPapers(); return;
+  }
+  const inspect = event.target.closest("[data-inspect-paper]");
+  if (inspect) { try { busy("Extracting scholarly analysis…"); const data = await api(`/api/papers/${encodeURIComponent(inspect.dataset.inspectPaper)}/analysis`); const panel = $("#paper-inspector"); panel.classList.remove("hidden"); panel.innerHTML = `<p class="panel-kicker">SOURCE INSPECTOR</p><h2>${escapeHtml(data.paper.title)}</h2><p>${data.paper.section_count} sections · ${data.paper.chunk_count} chunks</p><details open><summary>Structured analysis</summary><pre>${escapeHtml(JSON.stringify(data.analysis, null, 2))}</pre></details><details><summary>Extracted source</summary><pre>${escapeHtml(data.source.text)}</pre></details>`; busy("Analysis ready"); } catch (error) { toast(error.message, true); } return; }
+  const quickGenerate = event.target.closest("[data-generate-paper]");
+  if (quickGenerate) { try { busy("Generating diverse candidates…"); await api(`/api/papers/${encodeURIComponent(quickGenerate.dataset.generatePaper)}/questions/generate`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ count: 60 }) }); await refresh(); showView("benchmarks"); toast("Generated 60 proposed candidates."); } catch (error) { toast(error.message, true); } return; }
+  const run = event.target.closest("[data-run-question]");
+  if (run) { try { busy("Running trusted baseline…"); const sessionId = await ensureSession(); await api(`/api/questions/${encodeURIComponent(run.dataset.runQuestion)}/run`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ session_id: sessionId }) }); await refresh(); showView("review"); toast("Answer added to the review queue."); } catch (error) { toast(error.message, true); } return; }
+  const reviewStatus = event.target.closest("[data-question-status]");
+  if (reviewStatus) { try { await api(`/api/questions/${encodeURIComponent(reviewStatus.dataset.questionId)}/review`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ review_status: reviewStatus.dataset.questionStatus }) }); await refresh(); toast(`Question marked ${reviewStatus.dataset.questionStatus}.`); } catch (error) { toast(error.message, true); } return; }
+  const editTarget = event.target.closest("[data-edit-question-target]");
+  if (editTarget) {
+    const item = app.state.questions.find((question) => question.question_id === editTarget.dataset.editQuestionTarget);
+    if (!item) return;
+    const concepts = window.prompt("Required concepts (comma-separated):", item.required_concepts.join(", "));
+    if (concepts === null) return;
+    const prohibited = window.prompt("Prohibited claims (comma-separated):", item.prohibited_claims.join(", "));
+    if (prohibited === null) return;
+    try {
+      await api(`/api/questions/${encodeURIComponent(item.question_id)}/review`, {
+        method: "POST", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ review_status: item.review_status, required_concepts: concepts.split(",").map((part) => part.trim()).filter(Boolean), prohibited_claims: prohibited.split(",").map((part) => part.trim()).filter(Boolean) }),
+      });
+      await refresh(); toast("Candidate target fields updated; approval status unchanged.");
+    } catch (error) { toast(error.message, true); }
+    return;
+  }
+  const vary = event.target.closest("[data-vary-question]");
+  if (vary) { try { await api(`/api/questions/${encodeURIComponent(vary.dataset.varyQuestion)}/variations`, { method: "POST", headers: { "Content-Type": "application/json" }, body: "{}" }); await refresh(); toast("Four unapproved prompt variations added."); } catch (error) { toast(error.message, true); } return; }
+  const resumeBatch = event.target.closest("[data-resume-auto-batch]");
+  if (resumeBatch) {
+    try {
+      busy("Resuming from the first unfinished question…");
+      await api(`/api/automation/batches/${encodeURIComponent(resumeBatch.dataset.resumeAutoBatch)}/resume`, { method: "POST", headers: { "Content-Type": "application/json" }, body: "{}" });
+      await refresh();
+      showView("automation");
+      toast("The remaining questions finished. Review the complete batch below.");
+    } catch (error) { busy("Batch resume stopped"); toast(error.message, true); }
+    return;
+  }
+  const stopBatch = event.target.closest("[data-stop-auto-batch]");
+  if (stopBatch) {
+    try {
+      await api(`/api/automation/batches/${encodeURIComponent(stopBatch.dataset.stopAutoBatch)}/stop`, { method: "POST", headers: { "Content-Type": "application/json" }, body: "{}" });
+      await refresh(); toast("Stop requested; completed decisions are preserved.");
+    } catch (error) { toast(error.message, true); }
+    return;
+  }
+  const rerunReview = event.target.closest("[data-rerun-auto-review]");
+  if (rerunReview) {
+    try {
+      busy("Rerunning answer and second-pass gates…");
+      await api(`/api/automation/reviews/${encodeURIComponent(rerunReview.dataset.rerunAutoReview)}/rerun`, { method: "POST", headers: { "Content-Type": "application/json" }, body: "{}" });
+      await refresh(); toast("Review rerun from the original question and evidence pipeline.");
+    } catch (error) { toast(error.message, true); }
+    return;
+  }
+  const toggleBatch = event.target.closest("[data-toggle-auto-batch]");
+  if (toggleBatch) {
+    const batch = toggleBatch.closest("[data-auto-batch]");
+    const checkboxes = [...batch.querySelectorAll(".auto-include")];
+    const shouldCheck = checkboxes.some((checkbox) => !checkbox.checked);
+    checkboxes.forEach((checkbox) => { checkbox.checked = shouldCheck; });
+    return;
+  }
+  const saveBatch = event.target.closest("[data-save-auto-batch]");
+  if (saveBatch) {
+    const batch = saveBatch.closest("[data-auto-batch]");
+    const reviewer = batch.querySelector(".auto-reviewer").value.trim();
+    if (!reviewer) { toast("Enter your reviewer name or local identifier.", true); return; }
+    const cards = [...batch.querySelectorAll("[data-auto-review]")].filter((card) => card.querySelector(".auto-include"));
+    const includedCount = cards.filter((card) => card.querySelector(".auto-include").checked).length;
+    const message = `Save ${includedCount} draft${includedCount === 1 ? "" : "s"} as your reviews and exclude ${cards.length - includedCount}? Corrections will remain proposed.`;
+    if (!window.confirm(message)) return;
+    const decisions = cards.map((card) => ({
+      review_id: card.dataset.autoReview,
+      accepted: card.querySelector(".auto-include").checked,
+      review_label: card.querySelector(".auto-label").value,
+      corrected_answer: card.querySelector(".auto-corrected-answer").value,
+      required_facts: lines(card.querySelector(".auto-required-facts").value),
+      prohibited_claims: lines(card.querySelector(".auto-prohibited-claims").value),
+      evidence_ids: [...card.querySelectorAll(".auto-evidence input:checked")].map((node) => node.value),
+    }));
+    try {
+      busy("Saving your final batch decisions…");
+      const result = await api(`/api/automation/batches/${encodeURIComponent(saveBatch.dataset.saveAutoBatch)}/finalize`, {
+        method: "POST", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ reviewer, decisions }),
+      });
+      await refresh();
+      showView("automation");
+      toast(`${result.saved_review_count} reviews saved; ${result.excluded_count} excluded. Corrections remain proposed.`);
+    } catch (error) { toast(error.message, true); }
+    return;
+  }
+  const open = event.target.closest("[data-open-review]"); if (open) { openReview(open.dataset.openReview); return; }
+  const approve = event.target.closest("[data-approve-correction]");
+  if (approve) { const reviewer = window.prompt("Reviewer name or local identifier:"); if (!reviewer) return; try { await api(`/api/corrections/${encodeURIComponent(approve.dataset.approveCorrection)}/approve`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ reviewer }) }); await refresh(); toast("Correction approved for dataset export."); } catch (error) { toast(error.message, true); } }
+  const editCorrection = event.target.closest("[data-edit-correction]");
+  if (editCorrection) { const item = app.state.corrections.find((candidate) => candidate.example_id === editCorrection.dataset.editCorrection); const finalAnswer = window.prompt("Edit the proposed final answer:", item?.final_answer || ""); if (finalAnswer === null) return; try { await api(`/api/corrections/${encodeURIComponent(editCorrection.dataset.editCorrection)}/edit`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ final_answer: finalAnswer }) }); await refresh(); toast("Correction edited; it remains proposed."); } catch (error) { toast(error.message, true); } return; }
+  const auditCorrection = event.target.closest("[data-audit-correction]");
+  if (auditCorrection) { const reviewer = window.prompt("Human auditor name or local identifier:"); if (!reviewer) return; try { await api(`/api/corrections/${encodeURIComponent(auditCorrection.dataset.auditCorrection)}/audit`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ reviewer, passed: true }) }); await refresh(); toast("Audit pass recorded; provenance remains Codex-approved."); } catch (error) { toast(error.message, true); } return; }
+  const rejectCorrection = event.target.closest("[data-reject-correction]");
+  if (rejectCorrection) { const reviewer = window.prompt("Reviewer name or local identifier:"); if (!reviewer) return; const reason = window.prompt("Reason for rejecting this suggestion:", "") ?? ""; try { await api(`/api/corrections/${encodeURIComponent(rejectCorrection.dataset.rejectCorrection)}/reject`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ reviewer, reason }) }); await refresh(); toast("Correction suggestion rejected."); } catch (error) { toast(error.message, true); } return; }
+});
+
+$("#upload-form").addEventListener("submit", async (event) => { event.preventDefault(); const file = $("#paper-file").files[0]; if (!file) return; try { busy("Indexing paper locally…"); const title = $("#paper-title").value.trim(); await api(`/api/papers${title ? `?title=${encodeURIComponent(title)}` : ""}`, { method: "POST", headers: { "Content-Type": "application/octet-stream", "X-Filename": encodeURIComponent(file.name) }, body: await file.arrayBuffer() }); event.target.reset(); await refresh(); toast("Paper indexed locally."); } catch (error) { toast(error.message, true); } });
+
+$("#ask-form").addEventListener("submit", async (event) => { event.preventDefault(); if (!app.selectedPapers.size) { toast("Select at least one paper.", true); return; } try { busy("Selecting evidence and interpreting instructions…"); const sessionId = await ensureSession(); await api("/api/questions", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ question: $("#question").value, document_ids: [...app.selectedPapers], session_id: sessionId }) }); $("#question").value = ""; await refresh(); toast("Grounded answer ready for review."); } catch (error) { toast(error.message, true); } });
+
+$("#clear-conversation").onclick = () => { app.sessionId = null; toast("Started a fresh in-memory conversation."); };
+$("#refresh").onclick = () => refresh().catch((error) => toast(error.message, true));
+
+$("#create-audit-sample").onclick = async () => { try { const result = await api("/api/automation/audit-sample", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ sample_fraction: 0.10, seed: 42 }) }); await refresh(); toast(`Created a deterministic ${result.selected_count}-item audit queue.`); } catch (error) { toast(error.message, true); } };
+
+$("#enable-auto-approval").onclick = async () => { if (!window.confirm("Enable automatic approval for future batches? High-risk categories and failed gates will still require a human.")) return; try { await api("/api/automation/enable", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ enabled: true }) }); await refresh(); toast("Automatic approval enabled under the calibrated safety policy."); } catch (error) { toast(error.message, true); } };
+
+$("#generate-form").addEventListener("submit", async (event) => { event.preventDefault(); try { busy("Generating proposed questions…"); await api(`/api/papers/${encodeURIComponent($("#generate-paper").value)}/questions/generate`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ count: Number($("#generate-count").value) }) }); await refresh(); toast("Candidate pool generated; human review is required."); } catch (error) { toast(error.message, true); } });
+
+$("#automation-form").addEventListener("submit", async (event) => {
+  event.preventDefault();
+  const paperId = $("#automation-paper").value;
+  if (!paperId) { toast("Add a paper before running automatic review.", true); return; }
   try {
-    state.analysis = await api(
-      `/api/papers/${encodeURIComponent(documentId)}/analysis`,
-    );
-    renderAnalysis();
-  } catch (error) {
-    elements.analysisBody.innerHTML = `<div class="empty-artifact">${escapeHtml(error.message)}</div>`;
-    toast(error.message, true);
-  }
-}
+    busy("Running every question and drafting transparent reviews…");
+    await api("/api/automation/run", {
+      method: "POST", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ paper_ids: [paperId], generate_if_empty: true, generated_question_count: Number($("#automation-count-input").value), uncertain_only: $("#automation-uncertain-only").checked }),
+    });
+    await refresh();
+    showView("automation");
+    toast("First-pass reviews are ready for your final check.");
+  } catch (error) { busy("Automatic review stopped"); toast(error.message, true); }
+});
 
-async function refreshState({ selectNewest = false } = {}) {
-  const payload = await api("/api/state");
-  state.papers = payload.papers;
-  state.storage = payload.storage;
-  elements.feedbackCount.textContent = payload.feedback_count;
-  renderPaperList();
-  renderStoragePaths();
-  if (selectNewest && state.papers.length) {
-    await selectPaper(state.papers[state.papers.length - 1].document_id);
-  }
-}
+$("#manual-question-form").addEventListener("submit", async (event) => { event.preventDefault(); if (!app.selectedPapers.size) { toast("Select paper scope in Papers or Ask first.", true); return; } try { await api("/api/questions/manual", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ question: $("#manual-question").value, paper_ids: [...app.selectedPapers], question_type: $("#manual-type").value }) }); event.target.reset(); $("#manual-type").value = "user_authored"; await refresh(); toast("Manual question added as proposed."); } catch (error) { toast(error.message, true); } });
 
-async function uploadPaper(file) {
-  if (!file) return;
-  elements.uploadProgress.classList.remove("hidden");
-  elements.fileInput.disabled = true;
+$("#question-paper-filter").onchange = renderQuestions;
+$("#question-status-filter").onchange = renderQuestions;
+
+$("#find-evidence").onclick = async () => {
+  if (!app.currentInteraction) return;
   try {
-    const result = await api("/api/papers", {
-      method: "POST",
-      headers: { "X-Filename": encodeURIComponent(file.name) },
-      body: file,
+    const results = await api("/api/evidence/search", {
+      method: "POST", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ query: $("#evidence-query").value, paper_ids: paperIds(app.currentInteraction), top_k: 10 }),
     });
-    await refreshState();
-    await selectPaper(result.document_id);
-    toast(`${result.title} is indexed and ready.`);
-  } catch (error) {
-    toast(error.message, true);
-  } finally {
-    elements.uploadProgress.classList.add("hidden");
-    elements.fileInput.disabled = false;
-    elements.fileInput.value = "";
-  }
-}
+    $("#alternative-evidence").innerHTML = results.map((item) => `<label><input type="checkbox" name="retain-evidence" value="${escapeHtml(item.chunk_id)}"><strong>Alternative · ${escapeHtml(item.title || item.source_name)}</strong> ${escapeHtml(item.text)}</label>`).join("") || '<p class="microcopy">No alternative chunks matched.</p>';
+  } catch (error) { toast(error.message, true); }
+};
 
-function citationLocation(citation) {
-  if (citation?.display) return citation.display;
-  if (citation?.page_start) {
-    return citation.page_start === citation.page_end
-      ? `page ${citation.page_start}`
-      : `pages ${citation.page_start}–${citation.page_end}`;
-  }
-  if (citation?.start_line) {
-    return `lines ${citation.start_line}–${citation.end_line}`;
-  }
-  return "source passage";
-}
+$("#review-form").addEventListener("submit", async (event) => { event.preventDefault(); const retained = $$('input[name="retain-evidence"]:checked').map((node) => node.value); try { const correction = await api(`/api/interactions/${encodeURIComponent($("#review-interaction-id").value)}/review`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ review_label: $('input[name="review-label"]:checked').value, replacement_evidence_ids: retained, required_facts: lines($("#required-facts").value), prohibited_claims: lines($("#prohibited-claims").value), corrected_answer: $("#corrected-answer").value, notes: $("#review-notes").value }) }); await refresh(); $("#review-editor").classList.add("hidden"); showView("corrections"); toast(`Correction ${correction.example_id} saved for separate approval.`); } catch (error) { toast(error.message, true); } });
 
-function renderAnswer(record) {
-  const answer = record.answer;
-  state.currentInteraction = record;
-  elements.answerQuestion.textContent = record.question;
-  elements.answerText.innerHTML = escapeHtml(answer.answer_text).replace(
-    /\[(C\d+)\]/g,
-    '<span class="citation-label">[$1]</span>',
-  );
-  elements.answerStatus.textContent = answer.abstained
-    ? "Insufficient evidence"
-    : answer.validation.accepted
-      ? "Grounding validated"
-      : "Needs review";
-  elements.answerAudience.textContent =
-    audienceLabels[record.audience_level] || record.audience_level;
-  elements.answerStatus.classList.toggle("abstained", answer.abstained);
-  elements.evidenceGrid.innerHTML = answer.evidence
-    .map(
-      (item) => `
-        <article class="evidence-card">
-          <header>
-            <strong>${escapeHtml(item.label)}</strong>
-            <span>${escapeHtml(citationLocation(item.citation))}</span>
-          </header>
-          <p>${escapeHtml(item.text)}</p>
-        </article>`,
-    )
-    .join("");
-  if (!answer.evidence.length) {
-    elements.evidenceGrid.innerHTML =
-      '<div class="empty-artifact">No evidence met the sufficiency threshold.</div>';
-  }
-  document
-    .querySelectorAll('input[name="verdict"], #issue-options input')
-    .forEach((input) => {
-      input.checked = false;
-    });
-  document
-    .querySelectorAll('input[name="feedback-audience"]')
-    .forEach((input) => {
-      input.checked = input.value === record.audience_level;
-    });
-  elements.correctedAnswer.value = "";
-  elements.feedbackNotes.value = "";
-  elements.feedbackSaveState.textContent = "";
-  elements.answerCard.classList.remove("hidden");
-  elements.answerCard.scrollIntoView({ behavior: "smooth", block: "start" });
-}
+$("#export-dataset").onclick = async () => { try { busy("Validating trust, duplicates, and paper splits…"); const result = await api("/api/dataset/export", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ seed: 0, trust_tier: $("#dataset-trust-tier").value }) }); $("#dataset-output").textContent = JSON.stringify({ output: result.output, trust_tier: result.trust_tier, report: result.report }, null, 2); toast("Trust-tier dataset exported."); busy("Dataset verified"); } catch (error) { toast(error.message, true); } };
 
-async function askQuestion() {
-  if (!state.selectedPaper) return;
-  const question = elements.question.value.trim();
-  if (!question) {
-    toast("Write a question first.", true);
-    elements.question.focus();
-    return;
-  }
-  const audienceLevel = selectedRadio("question-audience");
-  if (!audienceLevel) {
-    toast("Choose the intended audience level.", true);
-    return;
-  }
-  elements.askButton.disabled = true;
-  elements.askButton.textContent = "Finding evidence…";
-  try {
-    const record = await api("/api/questions", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        question,
-        document_id: state.selectedPaper.document_id,
-        audience_level: audienceLevel,
-      }),
-    });
-    renderAnswer(record);
-  } catch (error) {
-    toast(error.message, true);
-  } finally {
-    elements.askButton.disabled = false;
-    elements.askButton.textContent = "Ask with citations";
-  }
-}
-
-async function saveFeedback() {
-  if (!state.currentInteraction) return;
-  const verdict = document.querySelector(
-    'input[name="verdict"]:checked',
-  )?.value;
-  if (!verdict) {
-    toast("Choose Correct, Partly correct, or Incorrect.", true);
-    return;
-  }
-  const audienceLevel = selectedRadio("feedback-audience");
-  if (!audienceLevel) {
-    toast("Choose the audience you are reviewing this answer for.", true);
-    return;
-  }
-  const issueCategories = Array.from(
-    document.querySelectorAll("#issue-options input:checked"),
-  ).map((input) => input.value);
-  elements.saveFeedback.disabled = true;
-  elements.feedbackSaveState.textContent = "Saving…";
-  try {
-    await api("/api/feedback", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        interaction_id: state.currentInteraction.interaction_id,
-        audience_level: audienceLevel,
-        verdict,
-        issue_categories: issueCategories,
-        corrected_answer: elements.correctedAnswer.value,
-        notes: elements.feedbackNotes.value,
-      }),
-    });
-    const payload = await api("/api/state");
-    elements.feedbackCount.textContent = payload.feedback_count;
-    elements.feedbackSaveState.textContent = "Saved locally ✓";
-    toast("Feedback saved for later Codex review.");
-  } catch (error) {
-    elements.feedbackSaveState.textContent = "";
-    toast(error.message, true);
-  } finally {
-    elements.saveFeedback.disabled = false;
-  }
-}
-
-function artifactValue(item) {
-  if (item == null) return "";
-  if (typeof item === "string" || typeof item === "number") return String(item);
-  if (item.name && item.status && Array.isArray(item.evidence)) {
-    const evidence = item.evidence.map((entry) => artifactValue(entry)).join("\n");
-    const notes = (item.notes || []).join("\n");
-    return [item.status.replaceAll("_", " "), evidence, notes]
-      .filter(Boolean)
-      .join("\n");
-  }
-  if (item.item && item.status && Array.isArray(item.values)) {
-    const values = item.values.map((entry) => artifactValue(entry)).join("\n");
-    return [item.status.replaceAll("_", " "), values, ...(item.notes || [])]
-      .filter(Boolean)
-      .join("\n");
-  }
-  if (item.reason) return item.reason;
-  if (item.value != null) {
-    return typeof item.value === "object"
-      ? JSON.stringify(item.value, null, 2)
-      : String(item.value);
-  }
-  if (item.raw_text) return item.raw_text;
-  if (item.symbol) return item.symbol;
-  if (item.text) return item.text;
-  if (item.description) return item.description;
-  if (item.title) return item.title;
-  return JSON.stringify(item, null, 2);
-}
-
-function artifactLabel(item, fallback) {
-  return (
-    item?.category ||
-    item?.symbol ||
-    item?.name ||
-    item?.item ||
-    item?.section ||
-    item?.equation_number ||
-    item?.validation ||
-    item?.confidence ||
-    fallback
-  );
-}
-
-function artifactCards(items, fallbackLabel) {
-  if (!items?.length) {
-    return '<div class="empty-artifact">No supported items were detected in the extracted text.</div>';
-  }
-  return `<div class="artifact-grid">${items
-    .map((item) => {
-      const citation = item.citation || item.selected_definition?.citation;
-      return `
-        <article class="artifact">
-          <div class="artifact-label">${escapeHtml(artifactLabel(item, fallbackLabel))}</div>
-          <pre>${escapeHtml(artifactValue(item))}</pre>
-          ${citation ? `<span class="source-location">${escapeHtml(citationLocation(citation))}</span>` : ""}
-        </article>`;
-    })
-    .join("")}</div>`;
-}
-
-function analysisSection(title, body) {
-  return `<section class="analysis-section"><h3>${escapeHtml(title)}</h3>${body}</section>`;
-}
-
-function renderOverview(data) {
-  const analysis = data.analysis;
-  const summary = data.summary;
-  const summaryFields = summary.fields || summary.sections || [];
-  return [
-    analysisSection("Structured summary", artifactCards(summaryFields, "Summary")),
-    analysisSection("Claims", artifactCards(analysis.claims, "Claim")),
-    analysisSection("Assumptions", artifactCards(analysis.assumptions, "Assumption")),
-    analysisSection("Limitations", artifactCards(analysis.limitations, "Limitation")),
-    analysis.warnings?.length
-      ? analysisSection(
-          "Extraction warnings",
-          artifactCards(
-            analysis.warnings.map((value) => ({ value })),
-            "Warning",
-          ),
-        )
-      : "",
-  ].join("");
-}
-
-function renderEquations(data) {
-  const analysis = data.analysis;
-  return [
-    analysisSection("Detected equations", artifactCards(analysis.equations, "Equation")),
-    analysisSection("Notation glossary", artifactCards(analysis.notation, "Symbol")),
-    analysisSection(
-      "Unresolved symbols",
-      artifactCards(
-        (analysis.unresolved_symbols || []).map((value) => ({ value })),
-        "Unresolved",
-      ),
-    ),
-  ].join("");
-}
-
-function renderMethods(data) {
-  const analysis = data.analysis;
-  return [
-    analysisSection("Methodology", artifactCards(analysis.methodology, "Method")),
-    analysisSection("Procedures", artifactCards(analysis.procedures, "Procedure")),
-    analysisSection("Datasets", artifactCards(analysis.datasets, "Dataset")),
-    analysisSection("Metrics", artifactCards(analysis.metrics, "Metric")),
-    analysisSection("Baselines", artifactCards(analysis.baselines, "Baseline")),
-    analysisSection(
-      "Hyperparameters",
-      artifactCards(analysis.hyperparameters, "Hyperparameter"),
-    ),
-    analysisSection("Experiments", artifactCards(analysis.experiments, "Experiment")),
-    analysisSection("Results", artifactCards(analysis.results, "Result")),
-    analysisSection("Ablations", artifactCards(analysis.ablations, "Ablation")),
-  ].join("");
-}
-
-function renderChecklist(data) {
-  const checklist = data.checklist;
-  return [
-    analysisSection(
-      "Implementation checklist",
-      artifactCards(checklist.items, "Checklist item"),
-    ),
-    analysisSection(
-      "Risk and missing-detail flags",
-      artifactCards(checklist.risk_flags, "Risk flag"),
-    ),
-  ].join("");
-}
-
-function renderAnalysis() {
-  if (!state.analysis) return;
-  const renderers = {
-    overview: renderOverview,
-    equations: renderEquations,
-    methods: renderMethods,
-    checklist: renderChecklist,
-    source: (data) =>
-      `<pre class="source-view">${escapeHtml(data.source.text)}</pre>`,
-  };
-  elements.analysisBody.innerHTML = renderers[state.activeTab](state.analysis);
-}
-
-function setActiveTab(tab) {
-  state.activeTab = tab;
-  document.querySelectorAll("[data-tab]").forEach((button) => {
-    const active = button.dataset.tab === tab;
-    button.classList.toggle("active", active);
-    button.setAttribute("aria-selected", active ? "true" : "false");
-  });
-  renderAnalysis();
-}
-
-function renderStoragePaths() {
-  elements.storagePaths.innerHTML = Object.entries(state.storage)
-    .map(
-      ([label, path]) =>
-        `<div><dt>${escapeHtml(label)}</dt><dd>${escapeHtml(path)}</dd></div>`,
-    )
-    .join("");
-}
-
-elements.fileInput.addEventListener("change", () =>
-  uploadPaper(elements.fileInput.files[0]),
-);
-
-["dragenter", "dragover"].forEach((eventName) => {
-  elements.dropzone.addEventListener(eventName, (event) => {
-    event.preventDefault();
-    elements.dropzone.classList.add("dragging");
-  });
-});
-
-["dragleave", "drop"].forEach((eventName) => {
-  elements.dropzone.addEventListener(eventName, (event) => {
-    event.preventDefault();
-    elements.dropzone.classList.remove("dragging");
-  });
-});
-
-elements.dropzone.addEventListener("drop", (event) => {
-  uploadPaper(event.dataTransfer.files[0]);
-});
-
-elements.paperList.addEventListener("click", (event) => {
-  const item = event.target.closest("[data-document-id]");
-  if (item) selectPaper(item.dataset.documentId);
-});
-
-elements.askButton.addEventListener("click", askQuestion);
-elements.question.addEventListener("keydown", (event) => {
-  if ((event.metaKey || event.ctrlKey) && event.key === "Enter") askQuestion();
-});
-
-document.querySelector(".prompt-row").addEventListener("click", (event) => {
-  const prompt = event.target.dataset.prompt;
-  if (prompt) {
-    elements.question.value = prompt;
-    elements.question.focus();
-  }
-});
-
-document.querySelector(".tab-list").addEventListener("click", (event) => {
-  if (event.target.dataset.tab) setActiveTab(event.target.dataset.tab);
-});
-
-elements.saveFeedback.addEventListener("click", saveFeedback);
-document.querySelector("#show-storage").addEventListener("click", () => {
-  elements.storageDialog.showModal();
-});
-
-refreshState().catch((error) => toast(error.message, true));
+refresh().catch((error) => { busy("Could not load local state"); toast(error.message, true); });

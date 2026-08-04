@@ -1,6 +1,6 @@
 # Scholarly artifact format
 
-Package 1.1.1 writes scholarly artifacts as UTF-8 JSON using format version 1.
+Package 1.2.0 writes scholarly artifacts as UTF-8 JSON using format version 1.
 Writes are atomic; pickle and object arrays are not used.
 
 Every artifact contains:

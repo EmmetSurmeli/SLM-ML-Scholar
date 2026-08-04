@@ -40,8 +40,18 @@ from localml_scholar.evaluation.serialization import (
     save_evaluation_run,
     save_review_records,
 )
-from localml_scholar.retrieval import RetrievalIndex
+from localml_scholar.retrieval import RetrievalIndex, SearchFilters
+from localml_scholar.review_app.service import ReviewService
 from localml_scholar.serialization import atomic_write_text
+from localml_scholar.training_data import (
+    GroundedInstructionExample,
+    build_dataset,
+    dataset_report,
+    generate_paper_questions,
+    infer_instruction_profile,
+    load_dataset,
+    save_dataset,
+)
 
 
 def _load_json_object(path: Path) -> dict:
@@ -60,6 +70,232 @@ def _write_markdown(path: Path, text: str) -> None:
     if path.suffix.casefold() not in {".md", ".markdown"}:
         raise ValueError("Markdown output path must end with .md or .markdown.")
     atomic_write_text(path, text)
+
+
+def _write_json(path: Path, value: object) -> None:
+    if path.suffix.casefold() != ".json":
+        raise ValueError("JSON output path must end with .json.")
+    atomic_write_text(
+        path,
+        json.dumps(value, ensure_ascii=False, sort_keys=True, indent=2, allow_nan=False)
+        + "\n",
+    )
+
+
+def _resolve_paper(index: RetrievalIndex, value: str):
+    matches = [
+        document
+        for document in index.documents
+        if value
+        in {
+            document.document_id,
+            document.source_name,
+            document.title,
+        }
+    ]
+    if len(matches) != 1:
+        raise ValueError(
+            "--paper must uniquely match a document ID, source name, or exact title."
+        )
+    return matches[0]
+
+
+def _generate_paper_questions(args: argparse.Namespace) -> None:
+    index = RetrievalIndex.load(args.index)
+    paper = _resolve_paper(index, args.paper)
+    candidates = generate_paper_questions(
+        paper.document_id,
+        paper.title or paper.source_name,
+        count=args.count,
+        section_titles=tuple(
+            section.heading or "Untitled section" for section in paper.sections
+        ),
+    )
+    _write_json(
+        args.output,
+        {
+            "format_version": "1.0",
+            "candidate_only": True,
+            "paper_id": paper.document_id,
+            "questions": [item.to_dict() for item in candidates],
+        },
+    )
+    print(
+        f"Saved {len(candidates)} proposed questions to {args.output}; "
+        "none are human-approved."
+    )
+
+
+def _run_review_set(args: argparse.Namespace) -> None:
+    index = RetrievalIndex.load(args.index)
+    paper = _resolve_paper(index, args.paper)
+    state = _load_json_object(args.questions)
+    raw_questions = state.get("questions")
+    if not isinstance(raw_questions, list):
+        raise ValueError("Questions artifact must contain a questions list.")
+    pipeline = GroundedAnswerPipeline(index)
+    results = []
+    for item in raw_questions:
+        if not isinstance(item, dict) or not isinstance(item.get("question"), str):
+            raise ValueError("Every question must be a JSON object with question text.")
+        question = item["question"]
+        answer = pipeline.answer(
+            question,
+            method="extractive",
+            top_k=8,
+            filters=SearchFilters(document_id=paper.document_id),
+        )
+        results.append(
+            {
+                "question_id": item.get("question_id"),
+                "paper_ids": [paper.document_id],
+                "question": question,
+                "question_type": item.get("question_type", "unknown"),
+                "instruction_profile": infer_instruction_profile(question).to_dict(),
+                "answer": answer.to_dict(),
+                "review_status": "pending_human_review",
+            }
+        )
+    _write_json(
+        args.output,
+        {
+            "format_version": "1.0",
+            "paper_id": paper.document_id,
+            "results": results,
+        },
+    )
+    print(f"Saved {len(results)} reviewable results to {args.output}.")
+
+
+def _export_training_data(args: argparse.Namespace) -> None:
+    if args.repository is not None:
+        if args.reviews is not None:
+            raise ValueError("Use either --repository or --reviews, not both.")
+        result = ReviewService(args.repository).export_training_dataset(
+            output=args.output,
+            seed=args.seed,
+            trust_tier=args.trust_tier,
+        )
+        print(
+            f"Saved {len(result['dataset']['examples'])} {args.trust_tier} "
+            f"examples to {args.output}."
+        )
+        return
+    if args.reviews is None:
+        raise ValueError("export-training-data requires --repository or --reviews.")
+    try:
+        state = json.loads(args.reviews.read_text(encoding="utf-8"))
+    except FileNotFoundError:
+        raise FileNotFoundError(
+            f"Reviews input does not exist: {args.reviews}"
+        ) from None
+    except (UnicodeDecodeError, json.JSONDecodeError) as error:
+        raise ValueError("Reviews input must be valid UTF-8 JSON.") from error
+    raw = (
+        state.get("examples", state.get("corrections"))
+        if isinstance(state, dict)
+        else state
+    )
+    if not isinstance(raw, list):
+        raise ValueError("Reviews input must contain an examples/corrections list.")
+    examples = tuple(GroundedInstructionExample.from_dict(item) for item in raw)
+    if not args.approved_only:
+        raise ValueError("Training exports require --approved-only.")
+    dataset = build_dataset(
+        examples,
+        dataset_version=args.dataset_version,
+        seed=args.seed,
+        trust_tier=args.trust_tier,
+    )
+    save_dataset(dataset, args.output)
+    print(f"Saved {len(dataset.examples)} {args.trust_tier} examples to {args.output}.")
+
+
+def _dataset_report(args: argparse.Namespace) -> None:
+    report = dataset_report(load_dataset(args.dataset))
+    if args.output is None:
+        print(json.dumps(report, ensure_ascii=False, sort_keys=True, indent=2))
+    else:
+        _write_json(args.output, report)
+        print(f"Saved dataset report to {args.output}.")
+
+
+def _auto_review_workspace(args: argparse.Namespace) -> None:
+    service = ReviewService(args.repository)
+    paper_ids = tuple(args.paper_id or ())
+    question_ids = None
+    if args.all_pending:
+        if paper_ids:
+            raise ValueError(
+                "Use either --paper/--paper-id or --all-pending, not both."
+            )
+        pending = [
+            item
+            for item in service.list_questions()
+            if item["review_status"]
+            in {
+                "proposed",
+                "needs_human_review",
+                "ambiguous",
+            }
+        ]
+        if not pending:
+            raise ValueError("No pending questions are available for auto-review.")
+        paper_ids = tuple(
+            sorted({paper_id for item in pending for paper_id in item["paper_ids"]})
+        )
+        question_ids = tuple(item["question_id"] for item in pending)
+    if not paper_ids:
+        raise ValueError("auto-review requires --paper or --all-pending.")
+    batch = service.run_automatic_review_batch(
+        paper_ids=paper_ids,
+        question_ids=question_ids,
+        generate_if_empty=args.generate_if_empty,
+        generated_question_count=args.generated_question_count,
+    )
+    if args.output is not None:
+        _write_json(args.output, batch)
+    print(
+        f"Second-pass reviewed {len(batch['reviews'])} examples; "
+        f"status={batch['status']}; calibration={batch['calibration_state']}."
+    )
+
+
+def _audit_workspace(args: argparse.Namespace) -> None:
+    service = ReviewService(args.repository)
+    result = service.create_audit_sample(
+        sample_fraction=args.sample_fraction,
+        seed=args.seed,
+    )
+    if args.output is not None:
+        _write_json(args.output, result)
+    print(
+        f"Selected {result['selected_count']} of {result['population_count']} "
+        "reviews for deterministic audit."
+    )
+
+
+def _calibration_workspace(args: argparse.Namespace) -> None:
+    service = ReviewService(args.repository)
+    result = service.state()["calibration"]
+    if args.output is None:
+        print(json.dumps(result, ensure_ascii=False, sort_keys=True, indent=2))
+    else:
+        _write_json(args.output, result)
+        print(f"Saved calibration report to {args.output}.")
+
+
+def _export_trust_tier(args: argparse.Namespace) -> None:
+    service = ReviewService(args.repository)
+    result = service.export_training_dataset(
+        output=args.output,
+        seed=args.seed,
+        trust_tier=args.trust_tier,
+    )
+    print(
+        f"Saved {len(result['dataset']['examples'])} {args.trust_tier} examples "
+        f"to {result['output']}."
+    )
 
 
 def _generate_candidates(args: argparse.Namespace) -> None:
@@ -238,7 +474,7 @@ def build_parser() -> argparse.ArgumentParser:
 
     starter = commands.add_parser(
         "attention-starter",
-        help="Bind the untrusted 33-question Attention-paper starter to an index.",
+        help="Bind the expanded untrusted Attention-paper starter to an index.",
     )
     starter.add_argument("--index", type=Path, required=True)
     starter.add_argument("--document-id", required=True)
@@ -303,6 +539,99 @@ def build_parser() -> argparse.ArgumentParser:
     compare.add_argument("--output", type=Path)
     compare.add_argument("--markdown", type=Path)
     compare.set_defaults(handler=_compare)
+
+    paper_questions = commands.add_parser(
+        "generate-paper-questions",
+        help="Generate 40-80 unapproved candidate questions for one local paper.",
+    )
+    paper_questions.add_argument(
+        "--index", type=Path, default=Path("outputs/review_app/index.json")
+    )
+    paper_questions.add_argument("--paper", required=True)
+    paper_questions.add_argument("--count", type=int, default=60)
+    paper_questions.add_argument("--output", type=Path, required=True)
+    paper_questions.set_defaults(handler=_generate_paper_questions)
+
+    review_set = commands.add_parser(
+        "run-review-set",
+        help="Run proposed paper questions through the deterministic baseline.",
+    )
+    review_set.add_argument(
+        "--index", type=Path, default=Path("outputs/review_app/index.json")
+    )
+    review_set.add_argument("--paper", required=True)
+    review_set.add_argument("--questions", type=Path, required=True)
+    review_set.add_argument("--output", type=Path, required=True)
+    review_set.set_defaults(handler=_run_review_set)
+
+    export = commands.add_parser(
+        "export-training-data",
+        help="Export an explicit grounded-instruction trust tier.",
+    )
+    export.add_argument("--reviews", type=Path)
+    export.add_argument("--repository", type=Path)
+    export.add_argument("--approved-only", action="store_true")
+    export.add_argument("--dataset-version", default="1.2.1")
+    export.add_argument(
+        "--trust-tier",
+        choices=("human-only", "human-and-audited", "include-codex-approved"),
+        default="human-and-audited",
+    )
+    export.add_argument("--seed", type=int, default=0)
+    export.add_argument("--output", type=Path, required=True)
+    export.set_defaults(handler=_export_training_data)
+
+    data_report = commands.add_parser(
+        "dataset-report",
+        help="Report paper splits and instruction-dataset diversity.",
+    )
+    data_report.add_argument("--dataset", type=Path, required=True)
+    data_report.add_argument("--output", type=Path)
+    data_report.set_defaults(handler=_dataset_report)
+
+    auto_review = commands.add_parser(
+        "auto-review",
+        help="Run confidence-gated second-pass review in a local workspace.",
+    )
+    auto_review.add_argument("--repository", type=Path, default=Path.cwd())
+    auto_review.add_argument("--paper-id", "--paper", action="append")
+    auto_review.add_argument("--all-pending", action="store_true")
+    auto_review.add_argument("--generate-if-empty", action="store_true")
+    auto_review.add_argument("--generated-question-count", type=int, default=60)
+    auto_review.add_argument("--output", type=Path)
+    auto_review.set_defaults(handler=_auto_review_workspace)
+
+    audit = commands.add_parser(
+        "audit-sample",
+        help="Create the deterministic 10%% plus mandatory-risk audit queue.",
+    )
+    audit.add_argument("--repository", type=Path, default=Path.cwd())
+    audit.add_argument("--sample-fraction", "--rate", type=float, default=0.10)
+    audit.add_argument("--seed", type=int, default=42)
+    audit.add_argument("--output", type=Path)
+    audit.set_defaults(handler=_audit_workspace)
+
+    calibration = commands.add_parser(
+        "calibration-report",
+        help="Report auto-review agreement, overrides, and activation state.",
+    )
+    calibration.add_argument("--repository", type=Path, default=Path.cwd())
+    calibration.add_argument("--output", type=Path)
+    calibration.set_defaults(handler=_calibration_workspace)
+
+    trust_export = commands.add_parser(
+        "export-trust-tier",
+        help="Export a deduplicated trust tier with paper-level splits.",
+    )
+    trust_export.add_argument("--repository", type=Path, default=Path.cwd())
+    trust_export.add_argument(
+        "--trust-tier",
+        choices=("human-only", "human-and-audited", "include-codex-approved"),
+        default="human-and-audited",
+    )
+    trust_export.add_argument("--seed", type=int, default=0)
+    trust_export.add_argument("--output", type=Path, required=True)
+    trust_export.set_defaults(handler=_export_trust_tier)
     return parser
 
 

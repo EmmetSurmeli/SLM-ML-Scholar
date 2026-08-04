@@ -1,18 +1,21 @@
-# Local paper review application
+# Local Paper Training Lab
 
 ## Purpose and boundary
 
-The Review Lab is a narrow local interface for the human-in-the-loop stage of
-LocalML Scholar. It lets a reader:
+This document describes the original Review Lab boundary, now expanded by
+Milestone 12A into the Paper Training Lab. See
+[`docs/training/paper_training_lab.md`](training/paper_training_lab.md) for the
+complete current workflow. The application lets a reader:
 
 1. add an extractable PDF, UTF-8 text file, or Markdown paper;
 2. inspect deterministic scholarly artifacts;
-3. ask an evidence-scoped question;
+3. select one, several, or all papers and ask an evidence-scoped question;
 4. read the exact passages and citations used by the answer;
-5. choose whether the answer is being evaluated for a PhD researcher/professor,
-   undergraduate, or high-school/beginner reader;
-6. save a verdict, pedagogical issue labels, notes, and an optional corrected
-   answer.
+5. express depth, mathematical background, format, derivation, critique, or
+   comparison needs naturally in the prompt;
+6. generate proposed benchmark questions and save a five-way review label,
+   evidence edits, factual targets, notes, and a corrected answer;
+7. separately approve corrections and export a paper-split dataset.
 
 The server binds only to `127.0.0.1`. It makes no cloud request and has no
 external model API. The browser assets are packaged with the project and use no
@@ -59,11 +62,22 @@ Default paths are:
 | Uploaded paper bytes | `data/raw/review_app/` | ignored |
 | Immutable retrieval snapshot | `outputs/review_app/index.json` | ignored |
 | Complete question/answer snapshots | `outputs/review_app/interactions.json` | ignored |
-| Human review queue | `outputs/review_app/feedback.json` | ignored |
+| Legacy human feedback | `outputs/review_app/feedback.json` | ignored |
+| Proposed questions | `outputs/review_app/question_candidates.json` | ignored |
+| Proposed/approved corrections | `outputs/review_app/corrections.json` | ignored |
+| Automatic review batches | `outputs/review_app/automatic_review_batches.json` | ignored |
+| Approved dataset | `outputs/review_app/grounded_instruction_dataset.json` | ignored |
+| Opt-in session preferences | `outputs/review_app/opt_in_sessions.json` | ignored |
 
 The interface displays the resolved absolute paths for the current repository.
 Writes use same-filesystem temporary files followed by atomic replacement.
 Concurrent request mutations are serialized by the application service.
+
+The **Auto-review** view can run all non-rejected questions for one paper and
+prepare editable first-pass labels from deterministic evidence diagnostics.
+These drafts are explicitly marked as non-semantic suggestions. A reviewer
+must save or exclude each draft, and every saved review remains a proposed
+correction until the separate Corrections approval step.
 
 To have Codex inspect your reviews, use a prompt such as:
 
@@ -95,8 +109,9 @@ Always compare important answers with the rendered paper.
 
 ## Question and feedback semantics
 
-Questions are scoped to the selected document with an explicit
-`SearchFilters(document_id=...)`. The current trusted path is deterministic
+Questions are scoped to the selected papers. One-paper queries use an explicit
+`SearchFilters(document_id=...)`; subset comparisons build a temporary local
+index over only those selected documents. The current trusted path is deterministic
 extractive answering. It can select and quote relevant sentences with exact
 citations or abstain when evidence is insufficient. It is not yet a trained
 scholarly explanation model. The intended audience is recorded with the
@@ -112,7 +127,7 @@ Each interaction record includes:
 - sufficiency and validation state;
 - index and evidence identities.
 
-Each feedback record includes:
+Legacy feedback records include:
 
 - `correct`, `partially_correct`, or `incorrect`;
 - the audience level against which that verdict was made;
@@ -125,7 +140,12 @@ Non-correct verdicts require at least one issue category. This turns review into
 structured diagnostic evidence without pretending that it is online learning.
 Pedagogical categories include `too_advanced`, `too_basic`,
 `missing_prerequisite`, and `unclear_explanation`. A reviewer may save separate
-feedback records for the same answer at different audience levels.
+feedback records for the same answer at different audience levels. The current
+training-data path instead uses `correct`, `partial`, `incorrect`,
+`should_abstain`, or `benchmark_problem`, and requires a separate approval
+before export. Canonical audience labels remain optional regression metadata;
+the user-facing app infers an adaptive `InstructionProfile` without requiring a
+static selector.
 
 ## Verification
 
@@ -148,3 +168,12 @@ python3 -m pytest -q tests/test_review_app_service.py tests/test_review_app_serv
 python3 -m ruff check .
 python3 -m ruff format --check .
 ```
+
+## Confidence-gated second pass
+
+Milestone 12A.1 adds a distinct second-pass review card showing confidence,
+all mandatory gates, human-only risk routes, correction state, and provenance.
+The dashboard exposes calibration and deterministic audit sampling. A
+`codex_approved` item remains visibly Codex-approved after an audit; it is not
+silently promoted to human gold. Batch stop/resume and per-item re-review retain
+completed decisions through atomic local writes.
