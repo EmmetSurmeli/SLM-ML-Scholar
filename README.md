@@ -21,32 +21,31 @@ framework or automatic-differentiation system. This is an educational and
 engineering constraint, not a claim that a from-scratch model is automatically
 faster or more capable.
 
-## Current status: Milestone 12A.2
+## Current status: Milestone 12A.3
 
-The package version is `1.2.2`.
+The package version is `1.2.3`.
 
-Milestone 12A.2 adds a dedicated Calibration Lab without treating automation
-as human gold:
+Milestone 12A.3 adds a separate, fully automated corpus-curation path without
+misrepresenting automation as human gold:
 
-- permanent human/Codex approval and rejection states
-- 16 mandatory approval gates with a default 0.95 threshold
-- conservative mandatory-human routes for semantic and extraction risks
-- three transparent, correlated reviewer configurations (not independent agents)
-- correction revalidation from the original evidence and citations
-- calibration lockout until at least 50 paired human outcomes qualify
-- deterministic 10% plus risk-triggered audit sampling
-- human-only, human-and-audited, and explicit Codex-inclusive trust tiers
-- provenance hashes, circular self-training warnings, and duplicate clusters
-- paper-level split and explicit test-only leakage protection
-- representative sampling across papers, question types, labels, confidence
-  bands, abstentions, and failures
-- one-click and keyboard validation with append-only historical reruns
-- false-approval-first readiness metrics and exact activation blockers
-- explicit bulk enable, mandatory auditing, and separate training approval
-- a local paper acquisition queue that never fetches sources
+- one-button paper-to-dataset processing with resumable per-question state
+- a genuine structured Codex reviewer when the configured CLI is available
+- separate answerer, evidence, answer, citation, and adjudication passes
+- reviewer blindness that removes answer confidence or retrieval score where needed
+- evidence-first correction with at most two repair attempts by default
+- conservative 0.97 acceptance and evidence thresholds
+- explicit `codex_curated` provenance, never `human_approved`
+- automatic rejection of uncertainty, unsupported claims, and unresolved citations
+- exact source, reviewer, repair, split, duplicate, and lineage records
+- paper-level 70/15/15 splits with strict held-out-test exclusion
+- separate training and evaluation artifacts
+- Codex-curated-only, human-only, combined, and all-trusted exports
+- bulk paper upload, background execution, restart, and quality reporting
 
 No transformer training occurs in this milestone. The application uses only
-papers the user supplies locally; it does not discover or download papers.
+papers the user supplies locally; it does not discover, browse for, or download
+papers. Local retrieval remains offline. The optional Codex reviewer uses the
+user's configured Codex service and should not be described as an offline model.
 
 Milestone 1 is complete and independently audited. Its character-level bigram
 learns a \(V\times V\) table of next-character logits and conditions only on
@@ -359,14 +358,16 @@ select evidence with lexical/LSA/hybrid retrieval, and validate output from an
 explicit local checkpoint, but the system does not understand
 passages, prove truth, or supply a useful pretrained model. These experiments
 establish implementation behavior, not general language understanding,
-paper-assistance capability, or retrieval quality. No external LLM, API,
-embedding model, vector database, or web search is used.
+paper-assistance capability, or retrieval quality. Core answering uses no
+external LLM, embedding API, vector database, or web search. Autonomous
+curation can invoke the configured Codex CLI solely for review of supplied
+local passages; it is not part of runtime paper answering.
 
 ## Local Paper Training Lab
 
-The human-in-the-loop interface supports:
+The interface supports both optional human review and autonomous curation:
 
-- local PDF, Markdown, and UTF-8 text submission
+- bulk local PDF, Markdown, and UTF-8 text submission
 - an indexed paper library with exact extracted source
 - deterministic scholarly summaries, notation, methods, experiments,
   limitations, and reproduction-checklist views
@@ -383,12 +384,14 @@ The human-in-the-loop interface supports:
 - local progress, diversity, and evaluation dashboards
 - a dedicated Calibration page with coverage gaps, readiness checks, editable
   validation cards, keyboard labels, and acquisition planning
+- a Fully Automated Curation page with conservative settings, background
+  execution, resumable state, machine audit metrics, and one-button export
 
 The Review Lab binds only to `127.0.0.1`; browser assets, papers, indexes,
-interactions, and reviews stay on the machine. In-memory conversation state is
-not persisted unless preferences are explicitly opted in. Feedback is **not
-automatic training**. Generated questions, prompt variations, and corrections
-remain proposed until a reviewer approves them.
+interactions, and run artifacts stay in the workspace. Codex review receives
+the supplied passages through the configured Codex service. Feedback and
+curation are **not automatic training**. The older human-review path remains
+available; the new autonomous path assigns only `codex_curated` trust.
 
 The Auto-review page checks citation validity, evidence sufficiency, query and
 comparison coverage, and expected abstention behavior, then proposes editable
@@ -410,6 +413,9 @@ Open `http://127.0.0.1:8765`. Uploaded files are limited to 30 MiB.
 Image-only/scanned PDFs require OCR before ingestion. PDF extraction remains
 text-only and cannot interpret figures, visual equations, or complex layout.
 See [the Paper Training Lab guide](docs/training/paper_training_lab.md),
+[autonomous curation guide](docs/training/autonomous_corpus_curation.md),
+[Codex review pipeline](docs/training/codex_review_pipeline.md),
+[autonomous quality policy](docs/training/autonomous_quality_policy.md),
 [Calibration Lab guide](docs/training/calibration_lab.md),
 [bulk automatic-approval policy](docs/training/bulk_auto_approval_policy.md),
 [adaptive profile specification](docs/training/adaptive_instruction_profiles.md),
@@ -778,6 +784,29 @@ false approvals and no integrity failures, remained locked in
 `calibration_active`, and changed to `auto_approval_enabled` only after the
 explicit enable command. The smoke fixture is not a capability result and did
 not alter the repository's real paper corpus or review artifacts.
+
+Milestone 12A.3 was verified on 2026-08-08 with:
+
+```bash
+python3 -m ruff check .
+python3 -m ruff format --check .
+node --check src/localml_scholar/review_app/static/app.js
+git diff --check
+python3 -m pytest -q
+python3 -m pytest -q tests/test_autonomous_curation.py
+PYTHONPATH=src python3 -m localml_scholar.training_data.cli --help
+PYTHONPATH=src python3 -c "import localml_scholar; print(localml_scholar.__version__)"
+```
+
+Ruff lint/format, JavaScript syntax, and whitespace checks were clean. The
+complete suite reported `813 passed in 9.01s`; the 22 focused autonomous tests
+passed; and version `1.2.3` imported correctly. Temporary integration fixtures
+verified successful curation, all critic failure routes, first/second repair,
+repair exhaustion, malformed-output suspension, restart, small-corpus split
+allocation, and zero test-paper correction leakage. The real workspace still
+contains six indexed papers and no autonomous run, so its measured autonomous
+counts remain zero accepted, zero rejected, and zero uncertain. No real paper
+payload was sent to Codex during verification and no model was trained.
 
 The 55-parameter deterministic attention inspection reported exact tensor
 shapes, scaled scores, the causal mask, probabilities, synthetic loss, and
@@ -1414,6 +1443,7 @@ docs/
   evaluation_benchmark_format.md Approved gold benchmark JSON contract
   evaluation_report_format.md Machine/Markdown report semantics
   corrected_answer_dataset.md Human-approved correction export rules
+  training/               Curation, trust, quality, and reviewer policies
   audits/                 Evidence-backed milestone audits
   derivations/           Math connected to source functions
 experiments/             Training, inspections, and controlled comparisons
@@ -1428,8 +1458,8 @@ src/localml_scholar/
   answering/              Evidence, answer methods, citations, validation, CLI
   scholarly/              Cited paper extraction, artifacts, comparison, CLI
   evaluation/             Gold benchmarks, graders, reports, review, CLI
-  training_data/          Adaptive profiles, corrections, splits, datasets
-  review_app/             Loopback Paper Training Lab and JSON API
+  training_data/          Profiles, Codex passes, autonomous curation, datasets
+  review_app/             Loopback Lab, resumable curator, and JSON API
   optimizers.py           Milestone 1 compatibility SGD
   generation.py           Bigram and transformer autoregressive sampling
   serialization.py        Atomic NPZ and text persistence
@@ -1575,8 +1605,9 @@ Mathematical details are in:
 The next recommended milestone is:
 
 > Milestone 12B: grounded instruction tuning of the custom local transformer
-> using trusted examples, with paper-level held-out evaluation and deterministic
-> extractive answering retained as the trusted baseline.
+> using Codex-curated and/or human-verified grounded examples, evaluated on
+> completely held-out papers with deterministic extractive answering retained
+> as the trusted baseline.
 
 See [the full roadmap](docs/roadmap.md) and
 [the architecture](docs/architecture.md).

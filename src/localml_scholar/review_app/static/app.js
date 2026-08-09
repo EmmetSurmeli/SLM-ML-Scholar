@@ -41,6 +41,7 @@ function paperIds(item) {
 
 const viewTitles = {
   papers: "Paper corpus", ask: "Grounded conversation", benchmarks: "Benchmark workshop",
+  autonomous: "Autonomous corpus curation",
   automation: "Automatic first-pass review", review: "Answer review",
   calibration: "Calibration Lab",
   corrections: "Correction approval", dataset: "Instruction dataset",
@@ -84,6 +85,7 @@ function renderPapers() {
     $("#automation-paper").value = automaticPaper;
   }
   $("#question-paper-filter").innerHTML = '<option value="">All papers</option>' + options;
+  if ($("#autonomous-paper-summary")) $("#autonomous-paper-summary").textContent = `${app.selectedPapers.size} papers selected`;
   renderScope();
 }
 
@@ -293,6 +295,21 @@ function renderDataset() {
   $("#progress-dashboard").innerHTML = app.state.progress.targets.map((target) => `<article class="target-card"><strong>${target.count}</strong><p>${target.reached ? "Target reached" : `${app.state.progress.approved_examples} approved · ${Math.round(target.progress * 100)}%`}</p><div class="progress-bar"><i style="width:${Math.round(target.progress * 100)}%"></i></div></article>`).join("");
 }
 
+function renderAutonomous() {
+  const state = app.state.autonomous_curation || {};
+  const run = state.latest_run;
+  const report = run?.report || {};
+  const statuses = state.status_counts || {};
+  $("#autonomous-count").textContent = statuses.codex_curated || 0;
+  $("#autonomous-paper-summary").textContent = `${app.selectedPapers.size} papers selected`;
+  $("#autonomous-resume").disabled = run?.status !== "suspended";
+  $("#autonomous-metrics").innerHTML = `
+    <div class="metric-row"><div><strong>${report.questions_generated || 0}</strong><span>questions</span></div><div><strong>${report.examples_accepted || statuses.codex_curated || 0}</strong><span>Codex-curated</span></div><div><strong>${report.examples_rejected || statuses.rejected || 0}</strong><span>rejected</span></div></div>
+    <p><span class="status-tag ${escapeHtml(run?.status || "proposed")}">${escapeHtml(run?.status || "not started")}</span> · stage ${escapeHtml(run?.stage || "none")} · Codex ${state.codex_available ? "available" : "unavailable"}</p>
+    <p class="microcopy">${run ? `Run ${escapeHtml(run.run_id)} · ${run.paper_ids?.length || 0} papers · updated ${escapeHtml(run.updated_at)}` : "Start with selected papers or select all papers in the corpus."}</p>`;
+  $("#autonomous-report").textContent = run ? JSON.stringify({ report, paper_splits: run.paper_splits, dataset_path: run.dataset_path, manifest_path: run.manifest_path, errors: run.errors }, null, 2) : "No run yet.";
+}
+
 function renderState() {
   $("#paper-count").textContent = app.state.papers.length;
   $("#question-count").textContent = app.state.question_count;
@@ -301,7 +318,7 @@ function renderState() {
   $("#metric-papers").textContent = app.state.papers.length;
   $("#metric-questions").textContent = app.state.question_count;
   $("#metric-approved").textContent = app.state.approved_example_count;
-  renderPapers(); renderConversation(); renderQuestions(); renderAutomaticBatches(); renderAutoPolicy(); renderCalibration(); renderReviewList(); renderCorrections(); renderDataset();
+  renderPapers(); renderConversation(); renderQuestions(); renderAutonomous(); renderAutomaticBatches(); renderAutoPolicy(); renderCalibration(); renderReviewList(); renderCorrections(); renderDataset();
 }
 
 async function refresh() {
@@ -490,7 +507,37 @@ document.addEventListener("click", async (event) => {
   if (rejectCorrection) { const reviewer = window.prompt("Reviewer name or local identifier:"); if (!reviewer) return; const reason = window.prompt("Reason for rejecting this suggestion:", "") ?? ""; try { await api(`/api/corrections/${encodeURIComponent(rejectCorrection.dataset.rejectCorrection)}/reject`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ reviewer, reason }) }); await refresh(); toast("Correction suggestion rejected."); } catch (error) { toast(error.message, true); } return; }
 });
 
-$("#upload-form").addEventListener("submit", async (event) => { event.preventDefault(); const file = $("#paper-file").files[0]; if (!file) return; try { busy("Indexing paper locally…"); const title = $("#paper-title").value.trim(); await api(`/api/papers${title ? `?title=${encodeURIComponent(title)}` : ""}`, { method: "POST", headers: { "Content-Type": "application/octet-stream", "X-Filename": encodeURIComponent(file.name) }, body: await file.arrayBuffer() }); event.target.reset(); await refresh(); toast("Paper indexed locally."); } catch (error) { toast(error.message, true); } });
+$("#upload-form").addEventListener("submit", async (event) => { event.preventDefault(); const files = [...$("#paper-file").files]; if (!files.length) return; try { busy(`Indexing ${files.length} paper${files.length === 1 ? "" : "s"} locally…`); const title = files.length === 1 ? $("#paper-title").value.trim() : ""; for (const file of files) { await api(`/api/papers${title ? `?title=${encodeURIComponent(title)}` : ""}`, { method: "POST", headers: { "Content-Type": "application/octet-stream", "X-Filename": encodeURIComponent(file.name) }, body: await file.arrayBuffer() }); } event.target.reset(); await refresh(); toast(`${files.length} paper${files.length === 1 ? "" : "s"} indexed locally.`); } catch (error) { toast(error.message, true); } });
+
+$("#autonomous-form").addEventListener("submit", async (event) => {
+  event.preventDefault();
+  if (!app.selectedPapers.size) { toast("Select at least one paper first.", true); return; }
+  const config = {
+    questions_per_paper: Number($("#autonomous-questions").value),
+    maximum_examples_per_paper: Number($("#autonomous-maximum").value),
+    acceptance_threshold: Number($("#autonomous-threshold").value),
+    evidence_threshold: Number($("#autonomous-threshold").value),
+    maximum_repair_attempts: Number($("#autonomous-repairs").value),
+    validation_fraction: 0.15, test_fraction: 0.15,
+    seed: Number($("#autonomous-seed").value),
+    include_multi_turn: $("#autonomous-multi-turn").checked,
+    include_derivations: $("#autonomous-derivations").checked,
+    include_cross_paper: $("#autonomous-cross-paper").checked,
+    include_abstentions: $("#autonomous-abstentions").checked,
+    per_question_type_cap: 12, maximum_disagreement_rate: 0.10,
+  };
+  if (!window.confirm(`Build a Codex-curated dataset from ${app.selectedPapers.size} paper(s)?\n\n${config.questions_per_paper} questions per paper\n${config.maximum_repair_attempts} repairs maximum\n${config.acceptance_threshold} acceptance threshold\nPaper-level 70/15/15 splits\nSeed ${config.seed}\n\nNo individual human approval will be requested.`)) return;
+  try {
+    busy("Starting autonomous curation…");
+    const run = await api("/api/autonomous/start", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ paper_ids: [...app.selectedPapers], config }) });
+    await refresh();
+    toast(`Run ${run.run_id} started in the background.`);
+  } catch (error) { busy("Autonomous curation did not start"); toast(error.message, true); }
+});
+
+$("#autonomous-refresh").onclick = () => refresh().catch((error) => toast(error.message, true));
+$("#autonomous-process-new").onclick = async () => { try { const run = await api("/api/autonomous/process-new", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ config: { questions_per_paper: 60, maximum_examples_per_paper: 40, acceptance_threshold: 0.97, evidence_threshold: 0.97, maximum_repair_attempts: 2, validation_fraction: 0.15, test_fraction: 0.15, seed: 42, include_multi_turn: true, include_derivations: true, include_cross_paper: false, include_abstentions: true, per_question_type_cap: 12, maximum_disagreement_rate: 0.10 } }) }); await refresh(); toast(`Run ${run.run_id} started for newly uploaded papers.`); } catch (error) { toast(error.message, true); } };
+$("#autonomous-resume").onclick = async () => { const run = app.state.autonomous_curation?.latest_run; if (!run) return; try { await api(`/api/autonomous/runs/${encodeURIComponent(run.run_id)}/resume`, { method: "POST", headers: { "Content-Type": "application/json" }, body: "{}" }); await refresh(); toast("Run resumed from its saved cursor."); } catch (error) { toast(error.message, true); } };
 
 $("#ask-form").addEventListener("submit", async (event) => { event.preventDefault(); if (!app.selectedPapers.size) { toast("Select at least one paper.", true); return; } try { busy("Selecting evidence and interpreting instructions…"); const sessionId = await ensureSession(); await api("/api/questions", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ question: $("#question").value, document_ids: [...app.selectedPapers], session_id: sessionId }) }); $("#question").value = ""; await refresh(); toast("Grounded answer ready for review."); } catch (error) { toast(error.message, true); } });
 

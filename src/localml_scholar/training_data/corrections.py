@@ -6,6 +6,7 @@ import re
 from dataclasses import replace
 from typing import Any
 
+from localml_scholar._version import __version__
 from localml_scholar.training_data.instructions import infer_instruction_profile
 from localml_scholar.training_data.provenance import ReviewProvenance, content_sha256
 from localml_scholar.training_data.schemas import (
@@ -133,7 +134,7 @@ def propose_correction(
     turns = recent + (ConversationTurn("user", question.strip()),)
     provenance = ReviewProvenance(
         producer_system="localml_scholar_grounded_answer_pipeline",
-        producer_version="1.2.2",
+        producer_version=__version__,
         reviewer_system="pending_human_review",
         reviewer_version="1",
         correction_system="localml_scholar_correction_editor",
@@ -206,7 +207,7 @@ def approve_correction(
         producer_system=source_provenance.get(
             "producer_system", "localml_scholar_grounded_answer_pipeline"
         ),
-        producer_version=source_provenance.get("producer_version", "1.2.2"),
+        producer_version=source_provenance.get("producer_version", __version__),
         reviewer_system=f"human:{reviewer.strip()}",
         reviewer_version="1",
         correction_system=source_provenance.get("correction_system"),

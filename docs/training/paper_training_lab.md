@@ -1,5 +1,22 @@
 # Paper Training Lab
 
+## Fully Automated Curation (1.2.3)
+
+The **Autonomous Curation** page is a parallel workflow for users who do not
+want to label individual examples. Select papers, inspect the conservative
+settings, and choose **Build Training Dataset**. The server creates a resumable
+background run and performs local analysis, question generation, answering,
+five Codex review passes, bounded repair, rejection, balancing, paper-level
+splitting, export, and reporting. **Process all newly uploaded papers** scopes a
+new run to papers absent from completed runs.
+
+This mode does not bypass provenance: accepted records are `codex_curated`, not
+human-approved. Uncertain and rejected records are retained only for optional
+inspection. The existing Review, Calibration, and Corrections pages remain
+available but do not block autonomous output. See
+[autonomous corpus curation](autonomous_corpus_curation.md) and the
+[quality policy](autonomous_quality_policy.md).
+
 The Paper Training Lab is a loopback-only human-review application for building
 grounded instruction data from locally indexed papers. It is a data-curation
 tool, not an online-learning system. Saving or approving a record never changes

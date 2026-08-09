@@ -10,8 +10,12 @@ Trust is explicit metadata. Review origin is never collapsed into a single
 | `human-only` | `human_approved` | 1.0 |
 | `human-and-audited` | human plus audited `codex_approved` | 1.0 / 0.9 |
 | `include-codex-approved` | human plus all `codex_approved` | 1.0 / 0.9 / 0.6 |
+| `codex-curated-only` | autonomous five-pass `codex_curated` only | 0.85 |
+| `human-and-codex-curated` | human plus `codex_curated` | 1.0 / 0.85 |
+| `all-trusted` | every eligible human, audited, Codex-approved, and Codex-curated record | tier-specific |
 
-The site and workspace CLI default to `human-and-audited`. The lower-level
+The legacy site/workspace export defaults to `human-and-audited`; autonomous
+curation defaults to `codex-curated-only`. The lower-level
 `build_dataset` API retains its conservative `human-only` default for backward
 compatibility. Weights are written to example/dataset metadata; training code
 does not apply them automatically, and future configuration may override them.
@@ -21,6 +25,13 @@ After a human confirms an audit, the browser exposes the effective status
 `codex_approved` with `audit_status=human_confirmed`, preserving the original
 producer identity and compatibility with existing datasets. It is never
 relabeled as human gold.
+
+`codex_curated` is separate from the older confidence-gated `codex_approved`
+state. It requires the autonomous evidence, answer, citation, and adjudication
+passes plus repair revalidation, source hashes, duplicate policy, and split
+checks. Its metadata retains every pass and explicitly records
+`human_approved=false`. Automated provenance is never upgraded merely because
+the autonomous workflow completed.
 
 Rejected, ambiguous, benchmark-problem, pending, unresolved-correction, and
 calibration-routed records are excluded.
@@ -56,7 +67,7 @@ evaluation artifacts, but their corrections cannot become training examples.
 
 - Automated approval is not human gold.
 - Confidence does not guarantee correctness.
-- Human audit sampling is required.
+- Human audit sampling is recommended but does not block autonomous curation.
 - Provenance must survive every edit and export.
 - Held-out papers must not leak into training.
 - The project does not browse for or download papers automatically.

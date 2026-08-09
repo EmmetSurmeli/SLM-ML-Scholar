@@ -5,6 +5,7 @@ from __future__ import annotations
 import argparse
 import json
 import mimetypes
+import threading
 from http import HTTPStatus
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
@@ -12,6 +13,7 @@ from typing import Any
 from urllib.parse import parse_qs, unquote, urlparse
 
 from localml_scholar.review_app.service import ReviewService
+from localml_scholar.training_data import AutonomousCurationConfig
 
 _STATIC_DIRECTORY = Path(__file__).parent / "static"
 _MAX_REQUEST_BYTES = 30 * 1024 * 1024
@@ -106,6 +108,16 @@ class ReviewRequestHandler(BaseHTTPRequestHandler):
                     )
                 )
                 return
+            if parsed.path.startswith("/api/autonomous/runs/"):
+                suffix = unquote(
+                    parsed.path.removeprefix("/api/autonomous/runs/")
+                ).strip("/")
+                if suffix.endswith("/report"):
+                    run_id = suffix.removesuffix("/report").strip("/")
+                    self._json(self.service.autonomous_curation_report(run_id))
+                    return
+                self._json(self.service._autonomous_curator().get_run(suffix))
+                return
             if parsed.path.startswith("/api/papers/") and parsed.path.endswith(
                 "/analysis"
             ):
@@ -139,6 +151,70 @@ class ReviewRequestHandler(BaseHTTPRequestHandler):
                     title=title,
                 )
                 self._json(result, HTTPStatus.CREATED)
+                return
+            if parsed.path == "/api/autonomous/start":
+                request = self._read_json()
+                config = AutonomousCurationConfig.from_dict(request.get("config", {}))
+                selected = request.get("paper_ids")
+                run = self.service.create_autonomous_curation(
+                    paper_ids=None if selected is None else tuple(selected),
+                    config=config,
+                )
+                threading.Thread(
+                    target=self.service.resume_autonomous_curation,
+                    args=(run["run_id"],),
+                    name=f"curation-{run['run_id']}",
+                    daemon=True,
+                ).start()
+                self._json(run, HTTPStatus.ACCEPTED)
+                return
+            if parsed.path == "/api/autonomous/process-new":
+                request = self._read_json()
+                config = AutonomousCurationConfig.from_dict(request.get("config", {}))
+                run = self.service.create_new_papers_autonomous_curation(config=config)
+                threading.Thread(
+                    target=self.service.resume_autonomous_curation,
+                    args=(run["run_id"],),
+                    name=f"curation-{run['run_id']}",
+                    daemon=True,
+                ).start()
+                self._json(run, HTTPStatus.ACCEPTED)
+                return
+            if parsed.path.startswith("/api/autonomous/runs/") and parsed.path.endswith(
+                "/resume"
+            ):
+                run_id = unquote(
+                    parsed.path.removeprefix("/api/autonomous/runs/").removesuffix(
+                        "/resume"
+                    )
+                ).strip("/")
+                self._read_json()
+                threading.Thread(
+                    target=self.service.resume_autonomous_curation,
+                    args=(run_id,),
+                    name=f"curation-{run_id}",
+                    daemon=True,
+                ).start()
+                self._json(
+                    {"run_id": run_id, "status": "resuming"}, HTTPStatus.ACCEPTED
+                )
+                return
+            if parsed.path.startswith("/api/autonomous/runs/") and parsed.path.endswith(
+                "/export"
+            ):
+                run_id = unquote(
+                    parsed.path.removeprefix("/api/autonomous/runs/").removesuffix(
+                        "/export"
+                    )
+                ).strip("/")
+                request = self._read_json()
+                self._json(
+                    self.service.export_autonomous_dataset(
+                        run_id,
+                        trust_tier=request.get("trust_tier", "codex-curated-only"),
+                    ),
+                    HTTPStatus.CREATED,
+                )
                 return
             if parsed.path == "/api/sessions":
                 request = self._read_json()
@@ -193,6 +269,12 @@ class ReviewRequestHandler(BaseHTTPRequestHandler):
                     query=request.get("query"),
                     paper_ids=tuple(request.get("paper_ids", [])),
                     top_k=request.get("top_k", 10),
+                    method=request.get("method", "bm25"),
+                    heading_path_prefix=(
+                        None
+                        if request.get("heading_path_prefix") is None
+                        else tuple(request["heading_path_prefix"])
+                    ),
                 )
                 self._json(result)
                 return

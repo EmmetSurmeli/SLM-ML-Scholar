@@ -736,6 +736,32 @@ Original reviews, calibration pairs, audits, and training approvals are
 separate artifacts. Newly loaded papers do not retrain the language model.
 Acquisition suggestions are metadata only and never trigger a download.
 
+## Autonomous curation architecture
+
+Milestone 12A.3 adds an autonomous trust path beside—not through—the human
+approval path:
+
+```text
+supplied local papers -> immutable index + source hashes -> generated questions
+       -> deterministic grounded answer -> Codex answerer
+       -> evidence critic / answer critic / citation critic
+       -> final adjudicator -> bounded evidence-first repair or terminal state
+       -> duplicate + balance + paper-split checks
+       -> codex_curated dataset + manifest + machine quality report
+```
+
+The critics receive deliberately different views. In particular, the evidence
+critic does not see the answer, and the answer critic does not see retrieval
+scores. Every pass is separately hashed and stored. These passes are not
+described as independent models. If Codex is unavailable, reviewer output is
+malformed, a source hash changes, or disagreement crosses the configured stop
+threshold, the run suspends at its persisted cursor.
+
+Training and evaluation remain separate. The curator stores test-paper
+questions without generating or retaining their corrected answers. Cross-paper
+examples spanning different splits are excluded. `codex_curated` is a distinct
+automated provenance class and is never rewritten to `human_approved`.
+
 ## Future module constraints
 
 The core neural-network path will continue to use Python, NumPy array storage

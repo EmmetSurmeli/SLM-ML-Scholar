@@ -10,13 +10,14 @@ critique, comparison, and ordinary paper question answering.
 Question generation, answer runs, heuristic diagnostics, prompt variations,
 and correction generation remain untrusted. Human and automated decisions use
 permanently distinct statuses. The lower-level `build_dataset` API defaults to
-`human-only`; the site/CLI defaults to `human-and-audited`. Explicit
+`human-only`; the legacy site/CLI path defaults to `human-and-audited`. The
+autonomous curator defaults to `codex-curated-only`. Explicit
 `include-codex-approved` export is available, but Codex approval never becomes
 human approval. Rejected, ambiguous, benchmark-problem, pending, circular, and
 test-only records are excluded.
 
 Every selected record receives trust weight metadata (1.0 human, 0.9 audited
-Codex, or 0.6 unaudited Codex), a stable duplicate-cluster ID, and one
+Codex, 0.85 Codex-curated, or 0.6 unaudited Codex), a stable duplicate-cluster ID, and one
 paper-level split. One highest-trust representative per duplicate cluster is
 exported by default.
 
@@ -28,6 +29,7 @@ unresolved items, and prohibited claims. Each target fact uses one provenance:
 
 - `paper_explicit`: stated by the selected paper and bound to a citation;
 - `mathematical_inference`: a derived mathematical step not stated verbatim;
+- `external_background`: standard background used to bridge a derivation;
 - `external_knowledge`: information outside the supplied papers;
 - `uncertain`: unresolved or insufficiently supported content.
 

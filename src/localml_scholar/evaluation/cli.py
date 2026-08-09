@@ -616,7 +616,7 @@ def build_parser() -> argparse.ArgumentParser:
     export.add_argument("--reviews", type=Path)
     export.add_argument("--repository", type=Path)
     export.add_argument("--approved-only", action="store_true")
-    export.add_argument("--dataset-version", default="1.2.2")
+    export.add_argument("--dataset-version", default="1.2.3")
     export.add_argument(
         "--trust-tier",
         choices=("human-only", "human-and-audited", "include-codex-approved"),

@@ -326,7 +326,7 @@ facts.
 
 The next recommended milestone is:
 
-> Milestone 12B: grounded instruction tuning of the custom local transformer using trusted examples, with paper-level held-out evaluation and deterministic extractive answering retained as the trusted baseline.
+> Milestone 12B: grounded instruction tuning of the custom local transformer using Codex-curated and/or human-verified grounded examples, evaluated on completely held-out papers with deterministic extractive answering retained as the trusted baseline.
 
 ## Milestone 12A.1 — Confidence-gated auto-review and audit sampling
 
@@ -362,9 +362,35 @@ The optional acquisition queue records local paper suggestions but performs no
 network request or download. Expand from the initial workflow corpus to 10–15,
 then 20–30 legally usable papers only after calibration behavior is understood.
 
+## Milestone 12A.3 — Fully automated Codex-reviewed corpus curation
+
+Status: complete in package 1.2.3; a real autonomous corpus run remains an
+explicit user action.
+
+The Paper Training Lab can now ingest a selected local corpus, generate 40–80
+questions per paper, answer from indexed evidence, run five schema-constrained
+Codex passes, repair evidence/answers at most twice, reject uncertainty,
+deduplicate and balance accepted records, enforce paper-level splits, and
+export `codex_curated` data without individual human approval. Run state and
+stage IDs are persisted for restart. Test-paper questions are evaluation-only;
+their answers and corrections never enter training data.
+
+This automated trust class is not human gold. Separate passes reduce but do not
+eliminate correlated or systematic reviewer error. The deterministic extractive
+answer remains the trusted baseline, optional human audit remains available,
+and no model is trained in this milestone. Test the workflow on 10–15 diverse
+papers before expanding to 20–30.
+
 ## Milestone 12B — Grounded scholarly explanation training
 
 Status: planned.
+
+Exact next milestone:
+
+> Milestone 12B: grounded instruction tuning of the custom local transformer
+> using Codex-curated and/or human-verified grounded examples, evaluated on
+> completely held-out papers with deterministic extractive answering retained
+> as the trusted baseline.
 
 Build a legally usable, versioned training and evaluation corpus from:
 

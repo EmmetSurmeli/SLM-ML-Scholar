@@ -12,6 +12,7 @@ from io import BytesIO
 from pathlib import Path
 from typing import Any
 
+from localml_scholar._version import __version__
 from localml_scholar.answering import GroundedAnswerPipeline
 from localml_scholar.retrieval import (
     PageText,
@@ -34,7 +35,10 @@ from localml_scholar.review_app.storage import (
 )
 from localml_scholar.scholarly import ScholarlyAnalysisPipeline
 from localml_scholar.training_data import (
+    AutonomousCurationConfig,
     AutoReviewPolicy,
+    CodexCLIReviewProvider,
+    CodexReviewProvider,
     ConversationContext,
     ConversationTurn,
     GroundedInstructionExample,
@@ -147,7 +151,12 @@ class ReviewService:
     retrain a model or alter an answer automatically.
     """
 
-    def __init__(self, repository_root: str | Path) -> None:
+    def __init__(
+        self,
+        repository_root: str | Path,
+        *,
+        codex_provider: CodexReviewProvider | None = None,
+    ) -> None:
         root = Path(repository_root).expanduser().resolve()
         if not root.is_dir():
             raise ValueError(f"repository_root must be an existing directory: {root}")
@@ -174,8 +183,22 @@ class ReviewService:
         self.acquisition_queue_path = (
             self.output_directory / "paper_acquisition_queue.json"
         )
+        self.autonomous_runs_path = (
+            self.output_directory / "autonomous_curation_runs.json"
+        )
+        self.autonomous_output_directory = self.output_directory / "autonomous_curation"
+        self.codex_provider = (
+            CodexCLIReviewProvider(root) if codex_provider is None else codex_provider
+        )
         self._sessions: dict[str, ConversationContext] = {}
         self._lock = threading.RLock()
+
+    def _autonomous_curator(self):
+        from localml_scholar.review_app.autonomous_curation import (
+            AutonomousCorpusCurator,
+        )
+
+        return AutonomousCorpusCurator(self)
 
     def _load_index(self, *, required: bool = True) -> RetrievalIndex | None:
         if not self.index_path.exists():
@@ -803,6 +826,8 @@ class ReviewService:
         query: str,
         paper_ids: tuple[str, ...],
         top_k: int = 10,
+        method: str = "bm25",
+        heading_path_prefix: tuple[str, ...] | None = None,
     ) -> list[dict[str, Any]]:
         """Return exact alternative chunks for deliberate evidence replacement."""
         query = _nonempty_text(query, "query", maximum=4000)
@@ -814,6 +839,20 @@ class ReviewService:
             or not 1 <= top_k <= 30
         ):
             raise ValueError("top_k must be an integer in [1, 30].")
+        if method not in {"tfidf", "bm25", "semantic", "hybrid", "hybrid_reranked"}:
+            raise ValueError(
+                "method must be tfidf, bm25, semantic, hybrid, or hybrid_reranked."
+            )
+        if heading_path_prefix is not None and (
+            not isinstance(heading_path_prefix, tuple)
+            or not heading_path_prefix
+            or not all(
+                isinstance(item, str) and item.strip() for item in heading_path_prefix
+            )
+        ):
+            raise ValueError(
+                "heading_path_prefix must be a non-empty tuple of headings or None."
+            )
         with self._lock:
             index = self._load_index()
             documents = {document.document_id: document for document in index.documents}
@@ -823,8 +862,59 @@ class ReviewService:
             selected_index = RetrievalIndex.build(
                 [documents[paper_id] for paper_id in paper_ids]
             )
-            results = selected_index.search(query, method="bm25", top_k=top_k)
+            filters = (
+                None
+                if heading_path_prefix is None
+                else SearchFilters(heading_path_prefix=heading_path_prefix)
+            )
+            results = selected_index.search(
+                query, method=method, top_k=top_k, filters=filters
+            )
         return [item.to_dict() for item in results]
+
+    def start_autonomous_curation(
+        self,
+        *,
+        paper_ids: tuple[str, ...] | None = None,
+        config: AutonomousCurationConfig | None = None,
+    ) -> dict[str, Any]:
+        """Start a resumable no-human-gate corpus-curation run."""
+        return self._autonomous_curator().start(paper_ids=paper_ids, config=config)
+
+    def create_autonomous_curation(
+        self,
+        *,
+        paper_ids: tuple[str, ...] | None = None,
+        config: AutonomousCurationConfig | None = None,
+    ) -> dict[str, Any]:
+        """Persist a run so an HTTP worker can execute it asynchronously."""
+        return self._autonomous_curator().create(paper_ids=paper_ids, config=config)
+
+    def resume_autonomous_curation(self, run_id: str) -> dict[str, Any]:
+        """Resume one saved autonomous run from its exact cursor."""
+        return self._autonomous_curator().resume(run_id)
+
+    def process_new_papers_autonomously(
+        self, *, config: AutonomousCurationConfig | None = None
+    ) -> dict[str, Any]:
+        """Process indexed papers absent from completed autonomous runs."""
+        return self._autonomous_curator().process_new(config=config)
+
+    def create_new_papers_autonomous_curation(
+        self, *, config: AutonomousCurationConfig | None = None
+    ) -> dict[str, Any]:
+        """Persist a background-ready run for every newly indexed paper."""
+        return self._autonomous_curator().create_new(config=config)
+
+    def autonomous_curation_report(self, run_id: str) -> dict[str, Any]:
+        """Return measured autonomous-curation metrics."""
+        return self._autonomous_curator().report(run_id)
+
+    def export_autonomous_dataset(
+        self, run_id: str, *, trust_tier: str = "codex-curated-only"
+    ) -> dict[str, Any]:
+        """Export a completed run using an explicit trust tier."""
+        return self._autonomous_curator().export(run_id, trust_tier=trust_tier)
 
     def propose_question_variations(self, question_id: str) -> list[dict[str, Any]]:
         """Create candidate-only phrasings linked to one reviewed target."""
@@ -1305,6 +1395,7 @@ class ReviewService:
                     else []
                 )
             normalized_interactions.append(normalized)
+        autonomous = self._autonomous_curator().corpus_metrics()
         return {
             "papers": papers,
             "feedback": list(reversed(feedback[-50:])),
@@ -1379,6 +1470,7 @@ class ReviewService:
             "audit_queue": audit_queue,
             "paper_acquisition_queue": load_json_list(self.acquisition_queue_path),
             "paper_splits": paper_splits,
+            "autonomous_curation": autonomous,
             "dataset_metrics": metrics,
             "dataset_warnings": list(diversity_warnings(metrics)),
             "progress": progress_status(len(approved)),
@@ -1397,10 +1489,13 @@ class ReviewService:
                 "calibration_pairs": str(self.calibration_pairs_path),
                 "historical_reruns": str(self.historical_reruns_path),
                 "paper_acquisition_queue": str(self.acquisition_queue_path),
+                "autonomous_curation_runs": str(self.autonomous_runs_path),
+                "autonomous_curation_outputs": str(self.autonomous_output_directory),
             },
             "privacy": (
-                "Files and review records stay on this machine. "
-                "Nothing is uploaded to a cloud service."
+                "Papers and artifacts stay in this workspace. Autonomous review "
+                "sends only its supplied review payloads through the configured "
+                "Codex service; local answering performs no public web search."
             ),
         }
 
@@ -2527,7 +2622,7 @@ class ReviewService:
             corrections = tuple(self._load_corrections())
             dataset = build_dataset(
                 corrections,
-                dataset_version="1.2.2",
+                dataset_version=__version__,
                 seed=seed,
                 manual_paper_splits=manual_paper_splits,
                 trust_tier=trust_tier,

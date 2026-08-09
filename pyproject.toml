@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "localml-scholar"
-version = "1.2.2"
+version = "1.2.3"
 description = "From-scratch local language-model foundations for research-paper assistance"
 readme = "README.md"
 requires-python = ">=3.10"
@@ -28,6 +28,7 @@ dev = [
 [project.scripts]
 localml-scholar-evaluate = "localml_scholar.evaluation.cli:main"
 localml-scholar-review = "localml_scholar.review_app.server:main"
+localml-scholar-curate = "localml_scholar.training_data.cli:main"
 
 [tool.setuptools.packages.find]
 where = ["src"]

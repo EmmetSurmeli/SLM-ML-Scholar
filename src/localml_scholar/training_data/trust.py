@@ -11,6 +11,9 @@ TRUST_TIERS = {
     "human-only",
     "human-and-audited",
     "include-codex-approved",
+    "codex-curated-only",
+    "human-and-codex-curated",
+    "all-trusted",
     # Compatibility alias used by early 1.2.1 development snapshots.
     "include-codex",
 }
@@ -18,12 +21,19 @@ TRUST_WEIGHTS = {
     "human_approved": 1.0,
     "codex_approved_audited": 0.9,
     "codex_approved": 0.6,
+    "codex_curated": 0.85,
 }
 
 
 def _eligible(example: GroundedInstructionExample, trust_tier: str) -> bool:
+    if example.review_status == "codex_curated":
+        return trust_tier in {
+            "codex-curated-only",
+            "human-and-codex-curated",
+            "all-trusted",
+        }
     if example.review_status == "human_approved":
-        return True
+        return trust_tier not in {"codex-curated-only"}
     if example.review_status != "codex_approved":
         return False
     provenance = example.metadata.get(
@@ -31,18 +41,32 @@ def _eligible(example: GroundedInstructionExample, trust_tier: str) -> bool:
     )
     if isinstance(provenance, dict) and provenance.get("circular_warnings"):
         return False
-    if trust_tier == "human-only":
+    if trust_tier in {
+        "human-only",
+        "codex-curated-only",
+        "human-and-codex-curated",
+    }:
         return False
     audited = example.metadata.get("audit_status") in {
         "human_confirmed",
         "passed",
     }
-    return trust_tier in {"include-codex", "include-codex-approved"} or audited
+    return (
+        trust_tier
+        in {
+            "include-codex",
+            "include-codex-approved",
+            "all-trusted",
+        }
+        or audited
+    )
 
 
 def _weight(example: GroundedInstructionExample) -> float:
     if example.review_status == "human_approved":
         return TRUST_WEIGHTS["human_approved"]
+    if example.review_status == "codex_curated":
+        return TRUST_WEIGHTS["codex_curated"]
     if example.metadata.get("audit_status") in {"human_confirmed", "passed"}:
         return TRUST_WEIGHTS["codex_approved_audited"]
     return TRUST_WEIGHTS["codex_approved"]
@@ -78,7 +102,7 @@ def select_trusted_examples(
     )
     if not deduplicate:
         return tuple(sorted(annotated, key=lambda item: item.example_id))
-    rank = {"human_approved": 0, "codex_approved": 1}
+    rank = {"human_approved": 0, "codex_curated": 1, "codex_approved": 2}
     representatives: dict[str, GroundedInstructionExample] = {}
     for item in sorted(
         annotated,

@@ -1,5 +1,12 @@
 # Local Paper Training Lab
 
+Version 1.2.3 also exposes **Autonomous Curation**. This no-human-gate mode uses
+the installed Codex CLI for structured review and therefore is distinct from
+the fully local deterministic baseline. The website itself remains loopback
+only, papers are supplied explicitly, and public web search/download is never
+performed. See `docs/training/autonomous_corpus_curation.md` for the run and
+privacy boundary.
+
 ## Purpose and boundary
 
 This document describes the original Review Lab boundary, now expanded by

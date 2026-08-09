@@ -12,6 +12,7 @@ import re
 from dataclasses import dataclass
 from typing import Any
 
+from localml_scholar._version import __version__
 from localml_scholar.training_data.provenance import ReviewProvenance, content_sha256
 from localml_scholar.training_data.schemas import QuestionCandidate
 
@@ -534,9 +535,9 @@ def review_interaction_second_pass(
     )
     provenance = ReviewProvenance(
         producer_system="localml_scholar_grounded_answer_pipeline",
-        producer_version="1.2.2",
+        producer_version=__version__,
         reviewer_system="localml_scholar_correlated_review_profiles",
-        reviewer_version="1.2.2",
+        reviewer_version=__version__,
         correction_system=(
             "localml_scholar_correlated_review_profiles"
             if corrected_answer is not None

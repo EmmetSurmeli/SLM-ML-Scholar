@@ -11,6 +11,7 @@ INSTRUCTION_DATA_FORMAT_VERSION = "1.0"
 PROVENANCE_LABELS = {
     "paper_explicit",
     "mathematical_inference",
+    "external_background",
     "external_knowledge",
     "uncertain",
 }
@@ -30,6 +31,12 @@ REVIEW_STATUSES = {
     "needs_human_review",
     "ambiguous",
     "benchmark_problem",
+    "codex_curated",
+    "uncertain",
+    "external_source_required",
+    "insufficient_evidence",
+    "duplicate",
+    "split_excluded",
     # Read compatibility for pre-1.2.1 local workspaces.
     "rejected",
 }
