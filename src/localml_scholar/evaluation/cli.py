@@ -285,6 +285,51 @@ def _calibration_workspace(args: argparse.Namespace) -> None:
         print(f"Saved calibration report to {args.output}.")
 
 
+def _calibration_sample_workspace(args: argparse.Namespace) -> None:
+    service = ReviewService(args.repository)
+    result = service.create_calibration_sample(target_count=args.count, seed=args.seed)
+    if args.output is not None:
+        _write_json(args.output, result)
+    print(
+        f"Selected {result['selected_count']} of {result['population_count']} "
+        f"reviews; coverage gaps={len(result['coverage_gaps'])}."
+    )
+
+
+def _rerun_historical_workspace(args: argparse.Namespace) -> None:
+    service = ReviewService(args.repository)
+    review_ids = None
+    if args.sample_only:
+        review_ids = tuple(service.state()["calibration_sample"].get("review_ids", []))
+        if not review_ids:
+            raise ValueError("The calibration sample is empty.")
+    result = service.rerun_historical_reviews(review_ids=review_ids)
+    if args.output is not None:
+        _write_json(args.output, result)
+    print(f"Appended {result['rerun_count']} non-destructive historical reruns.")
+
+
+def _calibration_status_workspace(args: argparse.Namespace) -> None:
+    service = ReviewService(args.repository)
+    result = service.state()["calibration"]
+    print(json.dumps(result, ensure_ascii=False, sort_keys=True, indent=2))
+
+
+def _enable_auto_approval_workspace(args: argparse.Namespace) -> None:
+    result = ReviewService(args.repository).set_auto_approval_enabled(enabled=True)
+    print(f"Automatic approval state: {result['state']}.")
+
+
+def _bulk_auto_review_workspace(args: argparse.Namespace) -> None:
+    result = ReviewService(args.repository).bulk_auto_review(
+        eligible_only=args.eligible_only
+    )
+    print(
+        f"Bulk reviewed {len(result['batch']['reviews'])} eligible questions; "
+        f"audit queue={result['audit']['selected_count']}."
+    )
+
+
 def _export_trust_tier(args: argparse.Namespace) -> None:
     service = ReviewService(args.repository)
     result = service.export_training_dataset(
@@ -571,7 +616,7 @@ def build_parser() -> argparse.ArgumentParser:
     export.add_argument("--reviews", type=Path)
     export.add_argument("--repository", type=Path)
     export.add_argument("--approved-only", action="store_true")
-    export.add_argument("--dataset-version", default="1.2.1")
+    export.add_argument("--dataset-version", default="1.2.2")
     export.add_argument(
         "--trust-tier",
         choices=("human-only", "human-and-audited", "include-codex-approved"),
@@ -618,6 +663,46 @@ def build_parser() -> argparse.ArgumentParser:
     calibration.add_argument("--repository", type=Path, default=Path.cwd())
     calibration.add_argument("--output", type=Path)
     calibration.set_defaults(handler=_calibration_workspace)
+
+    calibration_sample = commands.add_parser(
+        "calibration-sample",
+        help="Create a deterministic, stratified calibration work queue.",
+    )
+    calibration_sample.add_argument("--repository", type=Path, default=Path.cwd())
+    calibration_sample.add_argument("--count", type=int, default=50)
+    calibration_sample.add_argument("--seed", type=int, default=42)
+    calibration_sample.add_argument("--output", type=Path)
+    calibration_sample.set_defaults(handler=_calibration_sample_workspace)
+
+    rerun_historical = commands.add_parser(
+        "rerun-historical-reviews",
+        help="Append modern linked reruns without mutating original records.",
+    )
+    rerun_historical.add_argument("--repository", type=Path, default=Path.cwd())
+    rerun_historical.add_argument("--sample-only", action="store_true")
+    rerun_historical.add_argument("--output", type=Path)
+    rerun_historical.set_defaults(handler=_rerun_historical_workspace)
+
+    calibration_status = commands.add_parser(
+        "calibration-status", help="Show readiness checks and exact blocking reasons."
+    )
+    calibration_status.add_argument("--repository", type=Path, default=Path.cwd())
+    calibration_status.set_defaults(handler=_calibration_status_workspace)
+
+    enable_auto = commands.add_parser(
+        "enable-auto-approval",
+        help="Explicitly enable automatic approval after every readiness gate passes.",
+    )
+    enable_auto.add_argument("--repository", type=Path, default=Path.cwd())
+    enable_auto.set_defaults(handler=_enable_auto_approval_workspace)
+
+    bulk_auto = commands.add_parser(
+        "bulk-auto-review",
+        help="Review eligible pending items after explicit calibration activation.",
+    )
+    bulk_auto.add_argument("--repository", type=Path, default=Path.cwd())
+    bulk_auto.add_argument("--eligible-only", action="store_true", required=True)
+    bulk_auto.set_defaults(handler=_bulk_auto_review_workspace)
 
     trust_export = commands.add_parser(
         "export-trust-tier",

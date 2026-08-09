@@ -326,7 +326,7 @@ facts.
 
 The next recommended milestone is:
 
-> Milestone 12B: grounded instruction tuning and model comparison using human-approved training examples, with paper-level held-out evaluation and deterministic extractive answering retained as the trusted baseline.
+> Milestone 12B: grounded instruction tuning of the custom local transformer using trusted examples, with paper-level held-out evaluation and deterministic extractive answering retained as the trusted baseline.
 
 ## Milestone 12A.1 — Confidence-gated auto-review and audit sampling
 
@@ -344,6 +344,23 @@ Before Milestone 12B, calibrate on 50–100 examples, inspect every mandatory-ri
 route, audit at least 10%, confirm held-out paper isolation, and build a legally
 usable corpus with preserved source licenses. Codex approval remains distinct
 from human gold.
+
+## Milestone 12A.2 — Calibration Lab and bulk-readiness policy
+
+Status: complete in package 1.2.2; real-corpus human calibration remains user
+work.
+
+The local site now selects representative calibration samples, preserves
+historical reviews through linked append-only reruns, presents one-click and
+keyboard validation cards, reports false-approval-first metrics, and explains
+every readiness failure. Bulk approval remains disabled until at least 50
+human pairs and 20 positive candidates meet all metric and integrity gates and
+a human explicitly enables it. Calibration approval is not training approval.
+Audited automated examples retain their producer provenance.
+
+The optional acquisition queue records local paper suggestions but performs no
+network request or download. Expand from the initial workflow corpus to 10–15,
+then 20–30 legally usable papers only after calibration behavior is understood.
 
 ## Milestone 12B — Grounded scholarly explanation training
 

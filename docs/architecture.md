@@ -721,6 +721,21 @@ The site has no process-level facility for independent Codex agents, so it
 does not claim independence. It makes no web calls and cannot discover or
 download papers.
 
+Milestone 12A.2 adds a governance layer around this path:
+
+```text
+immutable automatic reviews -> deterministic stratified sample
+                             -> optional append-only modern rerun
+                             -> one-click human calibration pair
+                             -> false-approval/integrity readiness report
+                             -> explicit enable -> eligible bulk review
+                             -> 10% + risk audit -> trust-tier export
+```
+
+Original reviews, calibration pairs, audits, and training approvals are
+separate artifacts. Newly loaded papers do not retrain the language model.
+Acquisition suggestions are metadata only and never trigger a download.
+
 ## Future module constraints
 
 The core neural-network path will continue to use Python, NumPy array storage

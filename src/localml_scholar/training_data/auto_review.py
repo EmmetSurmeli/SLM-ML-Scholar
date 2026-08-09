@@ -534,9 +534,9 @@ def review_interaction_second_pass(
     )
     provenance = ReviewProvenance(
         producer_system="localml_scholar_grounded_answer_pipeline",
-        producer_version="1.2.1",
+        producer_version="1.2.2",
         reviewer_system="localml_scholar_correlated_review_profiles",
-        reviewer_version="1.2.1",
+        reviewer_version="1.2.2",
         correction_system=(
             "localml_scholar_correlated_review_profiles"
             if corrected_answer is not None

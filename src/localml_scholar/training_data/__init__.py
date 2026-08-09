@@ -1,5 +1,6 @@
 """Human-reviewed grounded instruction-data infrastructure."""
 
+from localml_scholar.training_data.acquisition import PaperAcquisitionItem
 from localml_scholar.training_data.audit import select_audit_sample
 from localml_scholar.training_data.auto_review import (
     AutoReviewDecision,
@@ -8,9 +9,12 @@ from localml_scholar.training_data.auto_review import (
     review_interaction_second_pass,
 )
 from localml_scholar.training_data.calibration import (
+    CONFIDENCE_BUCKETS,
     CalibrationPolicy,
     calibration_report,
+    confidence_bucket,
     recommend_threshold,
+    select_calibration_sample,
 )
 from localml_scholar.training_data.corrections import (
     approve_correction,
@@ -63,10 +67,13 @@ __all__ = [
     "TRUST_TIERS",
     "TRUST_WEIGHTS",
     "approve_correction",
+    "CONFIDENCE_BUCKETS",
+    "PaperAcquisitionItem",
     "assign_paper_splits",
     "build_dataset",
     "dataset_report",
     "calibration_report",
+    "confidence_bucket",
     "cluster_duplicates",
     "content_sha256",
     "generate_paper_questions",
@@ -78,5 +85,6 @@ __all__ = [
     "recommend_threshold",
     "review_interaction_second_pass",
     "select_audit_sample",
+    "select_calibration_sample",
     "select_trusted_examples",
 ]

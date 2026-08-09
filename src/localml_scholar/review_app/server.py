@@ -212,6 +212,94 @@ class ReviewRequestHandler(BaseHTTPRequestHandler):
                 )
                 self._json(result, HTTPStatus.CREATED)
                 return
+            if parsed.path == "/api/calibration/sample":
+                request = self._read_json()
+                self._json(
+                    self.service.create_calibration_sample(
+                        target_count=request.get("target_count", 50),
+                        seed=request.get("seed", 42),
+                    ),
+                    HTTPStatus.CREATED,
+                )
+                return
+            if parsed.path == "/api/calibration/rerun-historical":
+                request = self._read_json()
+                review_ids = request.get("review_ids")
+                self._json(
+                    self.service.rerun_historical_reviews(
+                        review_ids=None if review_ids is None else tuple(review_ids)
+                    ),
+                    HTTPStatus.CREATED,
+                )
+                return
+            if parsed.path.startswith(
+                "/api/calibration/reviews/"
+            ) and parsed.path.endswith("/decision"):
+                review_id = unquote(
+                    parsed.path.removeprefix("/api/calibration/reviews/").removesuffix(
+                        "/decision"
+                    )
+                ).strip("/")
+                request = self._read_json()
+                self._json(
+                    self.service.record_calibration_decision(
+                        review_id=review_id,
+                        action=request.get("action"),
+                        reviewer=request.get("reviewer"),
+                        edits=request.get("edits"),
+                    ),
+                    HTTPStatus.CREATED,
+                )
+                return
+            if parsed.path.startswith(
+                "/api/calibration/pairs/"
+            ) and parsed.path.endswith("/approve-training"):
+                pair_id = unquote(
+                    parsed.path.removeprefix("/api/calibration/pairs/").removesuffix(
+                        "/approve-training"
+                    )
+                ).strip("/")
+                request = self._read_json()
+                self._json(
+                    self.service.approve_calibration_for_training(
+                        pair_id=pair_id, reviewer=request.get("reviewer")
+                    )
+                )
+                return
+            if parsed.path == "/api/calibration/bulk-auto-review":
+                request = self._read_json()
+                self._json(
+                    self.service.bulk_auto_review(
+                        eligible_only=request.get("eligible_only", True)
+                    ),
+                    HTTPStatus.CREATED,
+                )
+                return
+            if parsed.path == "/api/acquisition":
+                request = self._read_json()
+                self._json(
+                    self.service.add_acquisition_item(
+                        title=request.get("title"),
+                        doi=request.get("doi"),
+                        arxiv_id=request.get("arxiv_id"),
+                        citation=request.get("citation"),
+                        reason=request.get("reason"),
+                        category=request.get("category"),
+                    ),
+                    HTTPStatus.CREATED,
+                )
+                return
+            if parsed.path.startswith("/api/acquisition/"):
+                item_id = unquote(parsed.path.removeprefix("/api/acquisition/")).strip(
+                    "/"
+                )
+                request = self._read_json()
+                self._json(
+                    self.service.update_acquisition_item(
+                        item_id=item_id, status=request.get("status")
+                    )
+                )
+                return
             if parsed.path == "/api/automation/audit-sample":
                 request = self._read_json()
                 result = self.service.create_audit_sample(

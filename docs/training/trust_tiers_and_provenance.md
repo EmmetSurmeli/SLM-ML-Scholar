@@ -16,6 +16,12 @@ The site and workspace CLI default to `human-and-audited`. The lower-level
 compatibility. Weights are written to example/dataset metadata; training code
 does not apply them automatically, and future configuration may override them.
 
+After a human confirms an audit, the browser exposes the effective status
+`audited_codex_approved`. The serialized review status remains
+`codex_approved` with `audit_status=human_confirmed`, preserving the original
+producer identity and compatibility with existing datasets. It is never
+relabeled as human gold.
+
 Rejected, ambiguous, benchmark-problem, pending, unresolved-correction, and
 calibration-routed records are excluded.
 

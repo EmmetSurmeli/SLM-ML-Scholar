@@ -74,6 +74,7 @@ textarea { resize: vertical; line-height: 1.5; }
 input:focus, textarea:focus, select:focus { outline: 3px solid rgba(36,94,73,.16); border-color: var(--forest-2); }
 button:not(.nav-link) { padding: 11px 16px; border-radius: 6px; color: #fff; background: var(--forest-2); font-weight: 750; }
 button:not(.nav-link):hover { filter: brightness(1.08); }
+button:disabled { cursor: not-allowed; opacity: .45; }
 button.secondary { color: var(--forest); background: transparent; border: 1px solid #bcb9ae; }
 .upload-panel button { color: var(--forest); background: var(--lime); }
 .form-actions { display: flex; gap: 10px; flex-wrap: wrap; }
@@ -154,6 +155,14 @@ fieldset { border: 1px solid var(--line); border-radius: 7px; padding: 14px; }
 .auto-evidence label { padding: 9px; border: 1px solid var(--line); border-radius: 5px; font-weight: 500; }
 .auto-evidence input { width: auto; margin: 0 7px 0 0; }
 .auto-review-card textarea:disabled, .auto-review-card select:disabled { color: var(--ink); opacity: .75; }
+
+.calibration-list { display: grid; gap: 16px; margin-top: 22px; }
+.calibration-card { display: grid; gap: 15px; }
+.calibration-card > header { display: flex; justify-content: space-between; gap: 18px; }
+.calibration-card h3 { font-family: Georgia, serif; font-size: 1.18rem; margin-bottom: 6px; }
+.calibration-card details pre { max-height: 300px; overflow: auto; white-space: pre-wrap; background: #f1efe7; padding: 12px; }
+.calibration-actions { display: flex; flex-wrap: wrap; gap: 7px; }
+.readiness-reasons { color: #7c3d2d; padding-left: 20px; font-size: .8rem; }
 
 .progress-list { display: grid; gap: 8px; margin-top: 20px; }
 .progress-bar { height: 6px; background: #e0ded5; border-radius: 9px; overflow: hidden; }

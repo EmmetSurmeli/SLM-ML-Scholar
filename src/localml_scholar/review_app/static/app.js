@@ -42,6 +42,7 @@ function paperIds(item) {
 const viewTitles = {
   papers: "Paper corpus", ask: "Grounded conversation", benchmarks: "Benchmark workshop",
   automation: "Automatic first-pass review", review: "Answer review",
+  calibration: "Calibration Lab",
   corrections: "Correction approval", dataset: "Instruction dataset",
   evaluation: "Evaluation dashboard",
 };
@@ -244,10 +245,43 @@ function renderAutoPolicy() {
   $("#enable-auto-approval").disabled = calibration.state !== "calibration_active";
 }
 
+function renderCalibration() {
+  const report = app.state.calibration || {};
+  const sample = app.state.calibration_sample || {};
+  const cards = app.state.calibration_cards || [];
+  const reasons = report.reasons || [];
+  $("#calibration-count").textContent = report.example_count || 0;
+  $("#calibration-metrics").innerHTML = `
+    <div class="metric-row"><div><strong>${report.example_count || 0} / ${report.minimum_examples || 50}</strong><span>validated pairs</span></div><div><strong>${Math.round((report.auto_approval_precision || 0) * 100)}%</strong><span>auto precision</span></div><div><strong>${report.false_approval_count || 0}</strong><span>false approvals</span></div></div>
+    <p><span class="status-tag ${escapeHtml(report.state || "calibration_required")}">${escapeHtml(report.state || "calibration_required")}</span> · agreement ${Math.round((report.agreement || 0) * 100)}% · false-approval rate ${Math.round((report.false_approval_rate || 0) * 100)}%</p>
+    ${reasons.length ? `<ul class="readiness-reasons">${reasons.map((item) => `<li>${escapeHtml(item)}</li>`).join("")}</ul>` : "<p>Every readiness check currently passes.</p>"}`;
+  const gaps = sample.coverage_gaps || [];
+  $("#calibration-coverage").innerHTML = `<p><strong>${sample.selected_count || 0}</strong> selected from <strong>${sample.population_count || 0}</strong> available reviews.</p>${gaps.length ? `<p class="warning">Coverage gaps: ${gaps.map(escapeHtml).join(", ")}</p>` : "<p>No available stratum is currently missing.</p>"}${(sample.warnings || []).map((item) => `<p class="warning">${escapeHtml(item)}</p>`).join("")}`;
+  $("#bulk-auto-review").disabled = report.state !== "auto_approval_enabled";
+  $("#enable-calibrated-approval").disabled = report.state !== "calibration_active";
+  $("#calibration-cards").innerHTML = cards.length ? cards.map((item, index) => {
+    if (item.unavailable) return `<article class="panel warning">${escapeHtml(item.review_id)}: ${escapeHtml(item.error)}</article>`;
+    const decision = item.calibration_decision;
+    const evidence = Array.isArray(item.answer?.evidence) ? item.answer.evidence : [];
+    const second = item.second_pass || {};
+    return `<article class="panel calibration-card" data-calibration-card="${escapeHtml(item.review_id)}" data-finished="${decision?.status === "finalized"}">
+      <header><div><p class="panel-kicker">${index + 1} · ${escapeHtml(item.question_type || "unknown")}</p><h3>${escapeHtml(item.question)}</h3><p class="microcopy">${paperIds(item).map(paperTitle).map(escapeHtml).join(" · ")} · automatic ${escapeHtml(item.proposed_label)} · ${Math.round((second.confidence ?? item.proposed_confidence ?? 0) * 100)}%</p></div><span class="status-tag">${escapeHtml(decision?.status || "pending")}</span></header>
+      <div class="auto-diagnostics"><span class="chip">${escapeHtml(second.review_status || "not rerun")}</span>${(second.mandatory_human_categories || []).map((value) => `<span class="chip attention">${escapeHtml(value)}</span>`).join("")}</div>
+      <label>System / corrected answer<textarea class="calibration-answer" rows="6" ${decision ? "disabled" : ""}>${escapeHtml(item.answer?.answer_text || "")}</textarea></label>
+      <div class="evidence-checks">${evidence.map((value) => `<label><input class="calibration-evidence" type="checkbox" value="${escapeHtml(value.evidence_id || value.chunk_id || value.label)}" checked ${decision ? "disabled" : ""}><strong>[${escapeHtml(value.label)}]</strong> ${escapeHtml(value.selected_text || "")}</label>`).join("") || "<p>No evidence retained.</p>"}</div>
+      <div class="auto-draft-fields"><label>Required facts<textarea class="calibration-facts" rows="3" ${decision ? "disabled" : ""}>${escapeHtml((item.proposed_required_facts || []).join("\n"))}</textarea></label><label>Prohibited claims<textarea class="calibration-prohibited" rows="3" ${decision ? "disabled" : ""}>${escapeHtml((item.proposed_prohibited_claims || []).join("\n"))}</textarea></label><label>Citation IDs <span>one per line</span><textarea class="calibration-citations" rows="3" ${decision ? "disabled" : ""}>${escapeHtml((item.citations || []).join("\n"))}</textarea></label><label>Structured target <span>JSON</span><textarea class="calibration-target" rows="3" ${decision ? "disabled" : ""}>${escapeHtml(JSON.stringify(item.structured_target || {}, null, 2))}</textarea></label></div>
+      <details><summary>Gates, failure category, and root cause</summary><pre>${escapeHtml(JSON.stringify({ reviewer_results: second.reviewer_results || [], root_cause: item.root_cause || [], diagnostics: item.diagnostics || {} }, null, 2))}</pre></details>
+      ${decision ? `<p><strong>Human decision:</strong> ${escapeHtml(decision.human_label || decision.action || decision.status)}${decision.edited ? " · edited and revalidated" : ""}</p>${decision.edited ? `<details><summary>Before / after correction</summary><div class="auto-answer-comparison"><div><strong>Before</strong><div class="answer-box">${escapeHtml(decision.original_snapshot?.answer?.answer_text || "")}</div></div><div><strong>After</strong><div class="answer-box">${escapeHtml(decision.reviewed_snapshot?.answer?.answer_text || "")}</div></div></div><pre>${escapeHtml(JSON.stringify(decision.revalidation || {}, null, 2))}</pre></details>` : ""}${decision.status === "finalized" && !decision.training_approved ? `<button class="secondary" data-calibration-training="${escapeHtml(decision.pair_id)}">Approve separately for training</button>` : ""}` : `<div class="calibration-actions"><button data-calibration-action="approve_auto">A · Approve auto</button><button class="secondary" data-calibration-action="override_correct">C · Correct</button><button class="secondary" data-calibration-action="override_partial">P · Partial</button><button class="secondary" data-calibration-action="override_incorrect">I · Incorrect</button><button class="secondary" data-calibration-action="override_should_abstain">S · Should abstain</button><button class="secondary" data-calibration-action="benchmark_problem">B · Benchmark problem</button><button class="secondary" data-calibration-action="skip">Skip</button></div>`}
+    </article>`;
+  }).join("") : '<div class="empty"><p>Create a calibration sample after running automatic reviews.</p></div>';
+  const acquisition = app.state.paper_acquisition_queue || [];
+  $("#acquisition-list").innerHTML = acquisition.length ? acquisition.map((item) => `<article class="review-card"><div><span class="type">${escapeHtml(item.category)}</span><br><span class="status-tag">${escapeHtml(item.status)}</span></div><div><p><strong>${escapeHtml(item.title)}</strong></p><p class="meta">${escapeHtml(item.reason)}${item.doi ? ` · DOI ${escapeHtml(item.doi)}` : ""}${item.arxiv_id ? ` · arXiv ${escapeHtml(item.arxiv_id)}` : ""}</p></div><div class="actions">${item.status === "suggested" ? `<button data-acquisition-status="obtained" data-acquisition-id="${escapeHtml(item.item_id)}">Mark obtained</button><button class="secondary" data-acquisition-status="declined" data-acquisition-id="${escapeHtml(item.item_id)}">Decline</button>` : ""}</div></article>`).join("") : '<div class="empty"><p>No paper suggestions yet.</p></div>';
+}
+
 function renderCorrections() {
   const items = app.state.corrections || [];
   $("#correction-list").innerHTML = items.length ? items.map((item) => `
-    <article class="review-card"><div><span class="type">${escapeHtml(item.review_label)}</span><br><span class="status-tag ${escapeHtml(item.review_status)}">${escapeHtml(item.review_status)}</span></div><div><p>${escapeHtml(item.turns[item.turns.length - 1].content)}</p><p class="meta">${escapeHtml(item.final_answer)}</p></div><div class="actions">${item.review_status === "proposed" ? `<button data-approve-correction="${escapeHtml(item.example_id)}">Human approve</button><button class="secondary" data-edit-correction="${escapeHtml(item.example_id)}">Edit</button><button class="secondary" data-reject-correction="${escapeHtml(item.example_id)}">Human reject</button>` : item.review_status === "codex_approved" ? `<button data-audit-correction="${escapeHtml(item.example_id)}">Audit pass</button><button class="secondary" data-reject-correction="${escapeHtml(item.example_id)}">Override / reject</button>` : ""}</div></article>`).join("") : '<div class="empty"><p>No correction proposals yet.</p></div>';
+    <article class="review-card"><div><span class="type">${escapeHtml(item.review_label)}</span><br><span class="status-tag ${escapeHtml(item.effective_trust_status || item.review_status)}">${escapeHtml(item.effective_trust_status || item.review_status)}</span></div><div><p>${escapeHtml(item.turns[item.turns.length - 1].content)}</p><p class="meta">${escapeHtml(item.final_answer)}</p></div><div class="actions">${item.review_status === "proposed" ? `<button data-approve-correction="${escapeHtml(item.example_id)}">Human approve</button><button class="secondary" data-edit-correction="${escapeHtml(item.example_id)}">Edit</button><button class="secondary" data-reject-correction="${escapeHtml(item.example_id)}">Human reject</button>` : item.review_status === "codex_approved" && item.effective_trust_status !== "audited_codex_approved" ? `<button data-audit-correction="${escapeHtml(item.example_id)}">Audit pass</button><button class="secondary" data-reject-correction="${escapeHtml(item.example_id)}">Override / reject</button>` : item.review_status === "codex_approved" ? `<button class="secondary" data-reject-correction="${escapeHtml(item.example_id)}">Override audited decision</button>` : ""}</div></article>`).join("") : '<div class="empty"><p>No correction proposals yet.</p></div>';
 }
 
 function renderDataset() {
@@ -267,7 +301,7 @@ function renderState() {
   $("#metric-papers").textContent = app.state.papers.length;
   $("#metric-questions").textContent = app.state.question_count;
   $("#metric-approved").textContent = app.state.approved_example_count;
-  renderPapers(); renderConversation(); renderQuestions(); renderAutomaticBatches(); renderAutoPolicy(); renderReviewList(); renderCorrections(); renderDataset();
+  renderPapers(); renderConversation(); renderQuestions(); renderAutomaticBatches(); renderAutoPolicy(); renderCalibration(); renderReviewList(); renderCorrections(); renderDataset();
 }
 
 async function refresh() {
@@ -307,6 +341,45 @@ function openReview(interactionId) {
 
 document.addEventListener("click", async (event) => {
   const nav = event.target.closest("[data-view]"); if (nav) { showView(nav.dataset.view); return; }
+  const calibrationAction = event.target.closest("[data-calibration-action]");
+  if (calibrationAction) {
+    const card = calibrationAction.closest("[data-calibration-card]");
+    const reviewer = $("#calibration-reviewer").value.trim();
+    if (!reviewer) { toast("Enter your reviewer name before validating a card.", true); return; }
+    const original = (app.state.calibration_cards || []).find((item) => item.review_id === card.dataset.calibrationCard);
+    const answerText = card.querySelector(".calibration-answer").value;
+    const facts = lines(card.querySelector(".calibration-facts").value);
+    const prohibited = lines(card.querySelector(".calibration-prohibited").value);
+    const evidenceIds = [...card.querySelectorAll(".calibration-evidence:checked")].map((node) => node.value);
+    const citations = lines(card.querySelector(".calibration-citations").value);
+    let structuredTarget;
+    try { structuredTarget = JSON.parse(card.querySelector(".calibration-target").value); } catch (_error) { toast("Structured target must be valid JSON.", true); return; }
+    const edits = {};
+    if (answerText !== (original.answer?.answer_text || "")) edits.answer_text = answerText;
+    if (JSON.stringify(facts) !== JSON.stringify(original.proposed_required_facts || [])) edits.required_facts = facts;
+    if (JSON.stringify(prohibited) !== JSON.stringify(original.proposed_prohibited_claims || [])) edits.prohibited_claims = prohibited;
+    if (JSON.stringify(evidenceIds) !== JSON.stringify(original.proposed_evidence_ids || [])) edits.evidence_ids = evidenceIds;
+    if (JSON.stringify(citations) !== JSON.stringify(original.citations || [])) edits.citations = citations;
+    if (JSON.stringify(structuredTarget) !== JSON.stringify(original.structured_target || {})) edits.structured_target = structuredTarget;
+    try {
+      await api(`/api/calibration/reviews/${encodeURIComponent(card.dataset.calibrationCard)}/decision`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ action: calibrationAction.dataset.calibrationAction, reviewer, edits: Object.keys(edits).length ? edits : null }) });
+      await refresh(); toast("Calibration decision saved. Training approval remains separate.");
+    } catch (error) { toast(error.message, true); }
+    return;
+  }
+  const trainingApproval = event.target.closest("[data-calibration-training]");
+  if (trainingApproval) {
+    const reviewer = $("#calibration-reviewer").value.trim();
+    if (!reviewer) { toast("Enter your reviewer name first.", true); return; }
+    if (!window.confirm("Approve this validated pair for the training dataset? This is separate from calibration.")) return;
+    try { await api(`/api/calibration/pairs/${encodeURIComponent(trainingApproval.dataset.calibrationTraining)}/approve-training`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ reviewer }) }); await refresh(); toast("Training approval recorded with provenance."); } catch (error) { toast(error.message, true); }
+    return;
+  }
+  const acquisitionStatus = event.target.closest("[data-acquisition-status]");
+  if (acquisitionStatus) {
+    try { await api(`/api/acquisition/${encodeURIComponent(acquisitionStatus.dataset.acquisitionId)}`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ status: acquisitionStatus.dataset.acquisitionStatus }) }); await refresh(); toast("Acquisition queue updated; no download was performed."); } catch (error) { toast(error.message, true); }
+    return;
+  }
   const selected = event.target.closest("[data-select-paper], [data-scope-paper]");
   if (selected) {
     const paperId = selected.dataset.selectPaper || selected.dataset.scopePaper;
@@ -427,6 +500,24 @@ $("#refresh").onclick = () => refresh().catch((error) => toast(error.message, tr
 $("#create-audit-sample").onclick = async () => { try { const result = await api("/api/automation/audit-sample", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ sample_fraction: 0.10, seed: 42 }) }); await refresh(); toast(`Created a deterministic ${result.selected_count}-item audit queue.`); } catch (error) { toast(error.message, true); } };
 
 $("#enable-auto-approval").onclick = async () => { if (!window.confirm("Enable automatic approval for future batches? High-risk categories and failed gates will still require a human.")) return; try { await api("/api/automation/enable", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ enabled: true }) }); await refresh(); toast("Automatic approval enabled under the calibrated safety policy."); } catch (error) { toast(error.message, true); } };
+
+$("#enable-calibrated-approval").onclick = async () => { if (!window.confirm("Explicitly enable automatic approval? Mandatory-human routes and audit sampling remain active.")) return; try { await api("/api/automation/enable", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ enabled: true }) }); await refresh(); toast("Automatic approval explicitly enabled under the calibrated policy."); } catch (error) { toast(error.message, true); } };
+
+$("#create-calibration-sample").onclick = async () => { try { busy("Selecting representative calibration cases…"); const result = await api("/api/calibration/sample", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ target_count: 50, seed: 42 }) }); await refresh(); toast(`Selected ${result.selected_count} calibration cases.`); } catch (error) { toast(error.message, true); } };
+
+$("#rerun-historical").onclick = async () => { const ids = app.state.calibration_sample?.review_ids || []; if (!ids.length) { toast("Create a sample first.", true); return; } try { busy("Appending modern historical reruns…"); const result = await api("/api/calibration/rerun-historical", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ review_ids: ids }) }); await refresh(); toast(`Appended ${result.rerun_count} linked reruns; originals were preserved.`); } catch (error) { toast(error.message, true); } };
+
+$("#bulk-auto-review").onclick = async () => { if (!window.confirm("Run eligible pending questions? Every result remains subject to the audit queue.")) return; try { busy("Running eligible pending reviews…"); const result = await api("/api/calibration/bulk-auto-review", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ eligible_only: true }) }); await refresh(); toast(`Reviewed ${result.batch.reviews.length} items; ${result.audit.selected_count} queued for audit.`); } catch (error) { toast(error.message, true); } };
+
+$("#acquisition-form").addEventListener("submit", async (event) => { event.preventDefault(); try { await api("/api/acquisition", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ title: $("#acquisition-title").value, doi: $("#acquisition-doi").value, arxiv_id: $("#acquisition-arxiv").value, citation: $("#acquisition-citation").value, reason: $("#acquisition-reason").value, category: $("#acquisition-category").value }) }); event.target.reset(); await refresh(); toast("Paper suggestion saved locally; nothing was fetched."); } catch (error) { toast(error.message, true); } });
+
+document.addEventListener("keydown", (event) => {
+  if (!$("#view-calibration").classList.contains("active") || /INPUT|TEXTAREA|SELECT/.test(event.target.tagName)) return;
+  const actions = { a: "approve_auto", c: "override_correct", p: "override_partial", i: "override_incorrect", s: "override_should_abstain", b: "benchmark_problem" };
+  if (event.key.toLowerCase() === "e") { document.querySelector('.calibration-card[data-finished="false"] .calibration-answer')?.focus(); return; }
+  const action = actions[event.key.toLowerCase()];
+  if (action) document.querySelector(`.calibration-card[data-finished="false"] [data-calibration-action="${action}"]`)?.click();
+});
 
 $("#generate-form").addEventListener("submit", async (event) => { event.preventDefault(); try { busy("Generating proposed questions…"); await api(`/api/papers/${encodeURIComponent($("#generate-paper").value)}/questions/generate`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ count: Number($("#generate-count").value) }) }); await refresh(); toast("Candidate pool generated; human review is required."); } catch (error) { toast(error.message, true); } });
 

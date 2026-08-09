@@ -579,6 +579,7 @@ class RetrievalIndex:
             "1.1.0",
             "1.1.1",
             "1.2.0",
+            "1.2.1",
             __version__,
         }:
             raise ValueError("Retrieval index package version is incompatible.")

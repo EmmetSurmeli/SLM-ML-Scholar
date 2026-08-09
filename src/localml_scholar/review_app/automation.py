@@ -304,6 +304,18 @@ def summarize_automatic_reviews(reviews: list[dict[str, Any]]) -> dict[str, Any]
     for review in reviews:
         status = review.get("second_pass", {}).get("review_status", "not_run")
         second_pass_counts[status] = second_pass_counts.get(status, 0) + 1
+    calibration_states = {
+        review.get("second_pass", {}).get("calibration_state")
+        for review in reviews
+        if isinstance(review.get("second_pass", {}).get("calibration_state"), str)
+    }
+    calibration_state = (
+        next(iter(calibration_states))
+        if len(calibration_states) == 1
+        else "mixed"
+        if calibration_states
+        else "calibration_required"
+    )
     return {
         "review_count": len(reviews),
         "proposed_label_counts": labels,
@@ -323,6 +335,6 @@ def summarize_automatic_reviews(reviews: list[dict[str, Any]]) -> dict[str, Any]
             not bool(item.get("saveable", True)) for item in reviews
         ),
         "second_pass_status_counts": dict(sorted(second_pass_counts.items())),
-        "automatic_approval_enabled": False,
-        "calibration_state": "calibration_required",
+        "automatic_approval_enabled": calibration_state == "auto_approval_enabled",
+        "calibration_state": calibration_state,
     }

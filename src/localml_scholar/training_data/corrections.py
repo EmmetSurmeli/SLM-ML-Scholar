@@ -133,7 +133,7 @@ def propose_correction(
     turns = recent + (ConversationTurn("user", question.strip()),)
     provenance = ReviewProvenance(
         producer_system="localml_scholar_grounded_answer_pipeline",
-        producer_version="1.2.1",
+        producer_version="1.2.2",
         reviewer_system="pending_human_review",
         reviewer_version="1",
         correction_system="localml_scholar_correction_editor",
@@ -206,7 +206,7 @@ def approve_correction(
         producer_system=source_provenance.get(
             "producer_system", "localml_scholar_grounded_answer_pipeline"
         ),
-        producer_version=source_provenance.get("producer_version", "1.2.1"),
+        producer_version=source_provenance.get("producer_version", "1.2.2"),
         reviewer_system=f"human:{reviewer.strip()}",
         reviewer_version="1",
         correction_system=source_provenance.get("correction_system"),

@@ -89,3 +89,8 @@ upload → index → generate questions → run answers → auto-review
 Implementation: `training_data/auto_review.py`, `review_app/automation.py`, and
 `review_app/service.py`. Validation is in
 `tests/test_codex_assisted_auto_review.py` and the existing review-app tests.
+
+Milestone 12A.2 keeps this reviewer unchanged and adds the human calibration
+workflow around it. See [Calibration Lab](calibration_lab.md) and the
+[bulk-approval policy](bulk_auto_approval_policy.md). Historical reruns are
+append-only; the original review remains available with its content hash.

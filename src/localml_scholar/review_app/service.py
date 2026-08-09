@@ -5,6 +5,7 @@ from __future__ import annotations
 import re
 import threading
 import uuid
+from copy import deepcopy
 from dataclasses import replace
 from datetime import UTC, datetime
 from io import BytesIO
@@ -37,6 +38,7 @@ from localml_scholar.training_data import (
     ConversationContext,
     ConversationTurn,
     GroundedInstructionExample,
+    PaperAcquisitionItem,
     QuestionCandidate,
     assign_paper_splits,
     build_dataset,
@@ -46,8 +48,10 @@ from localml_scholar.training_data import (
     generate_prompt_variations,
     infer_instruction_profile,
     propose_correction,
+    review_interaction_second_pass,
     save_dataset,
     select_audit_sample,
+    select_calibration_sample,
 )
 from localml_scholar.training_data import (
     approve_correction as approve_correction_example,
@@ -58,6 +62,7 @@ from localml_scholar.training_data.diversity import (
     progress_status,
     review_priority,
 )
+from localml_scholar.training_data.provenance import content_sha256
 from localml_scholar.training_data.schemas import REVIEW_LABELS
 
 _SUPPORTED_SUFFIXES = {".pdf", ".txt", ".md", ".markdown"}
@@ -161,6 +166,14 @@ class ReviewService:
         )
         self.review_policy_path = self.output_directory / "review_policy.json"
         self.audit_queue_path = self.output_directory / "audit_queue.json"
+        self.calibration_sample_path = self.output_directory / "calibration_sample.json"
+        self.calibration_pairs_path = self.output_directory / "calibration_pairs.json"
+        self.historical_reruns_path = (
+            self.output_directory / "historical_review_reruns.json"
+        )
+        self.acquisition_queue_path = (
+            self.output_directory / "paper_acquisition_queue.json"
+        )
         self._sessions: dict[str, ConversationContext] = {}
         self._lock = threading.RLock()
 
@@ -397,13 +410,98 @@ class ReviewService:
             },
         )
 
+    def _all_automatic_reviews(self) -> list[dict[str, Any]]:
+        """Return original reviews plus append-only reruns in stable order."""
+        originals = [
+            review
+            for batch in self._load_automatic_review_batches()
+            for review in batch.get("reviews", [])
+        ]
+        reruns = load_json_list(self.historical_reruns_path)
+        latest_by_original: dict[str, dict[str, Any]] = {}
+        for rerun in reruns:
+            original_id = rerun.get("original_review_id")
+            review = rerun.get("new_review")
+            if isinstance(original_id, str) and isinstance(review, dict):
+                latest_by_original[original_id] = review
+        return [
+            latest_by_original.get(item.get("review_id"), item) for item in originals
+        ]
+
+    def _calibration_records(self) -> list[dict[str, Any]]:
+        """Load 1.2.2 pairs and legacy policy records without double counting."""
+        legacy = self._review_policy_state().get("calibration_records", [])
+        if not isinstance(legacy, list):
+            raise ValueError("review_policy calibration_records must be a list.")
+        pairs = load_json_list(self.calibration_pairs_path)
+        by_review = {
+            item.get("review_id"): item
+            for item in legacy
+            if isinstance(item.get("review_id"), str)
+        }
+        for item in pairs:
+            review_id = item.get("review_id")
+            if isinstance(review_id, str) and item.get("status") == "finalized":
+                by_review[review_id] = item
+        return list(by_review.values())
+
+    def _calibration_integrity(self) -> dict[str, int]:
+        """Compute integrity failures for native 1.2.2 calibration pairs."""
+        pairs = [
+            item
+            for item in load_json_list(self.calibration_pairs_path)
+            if item.get("status") == "finalized"
+        ]
+        source_hash_errors = 0
+        provenance_errors = 0
+        test_leakage_errors = 0
+        identities: list[str] = []
+        for pair in pairs:
+            snapshot = pair.get("reviewed_snapshot", {})
+            second = snapshot.get("second_pass", {})
+            provenance = second.get("provenance", {})
+            source_hashes = provenance.get("source_hashes")
+            if not isinstance(source_hashes, list) or not source_hashes:
+                source_hash_errors += 1
+            if provenance.get("circular_warnings"):
+                provenance_errors += 1
+            metadata = snapshot.get("metadata", {})
+            if isinstance(metadata, dict) and (
+                metadata.get("test_only") or metadata.get("test_only_paper_ids")
+            ):
+                test_leakage_errors += 1
+            identities.append(
+                content_sha256(
+                    {
+                        "question": snapshot.get("question"),
+                        "answer": snapshot.get("answer", {}).get("answer_text"),
+                        "paper_ids": snapshot.get("paper_ids", []),
+                    }
+                )
+            )
+        duplicate_errors = len(identities) - len(set(identities))
+        return {
+            "source_hash_errors": source_hash_errors,
+            "test_leakage_errors": test_leakage_errors,
+            "provenance_errors": provenance_errors,
+            "duplicate_errors": duplicate_errors,
+        }
+
     def _calibration(self) -> dict[str, Any]:
         state = self._review_policy_state()
-        records = state.get("calibration_records", [])
-        if not isinstance(records, list):
-            raise ValueError("review_policy calibration_records must be a list.")
+        integrity = self._calibration_integrity()
+        for name, value in state.get("integrity", {}).items():
+            if (
+                name in integrity
+                and isinstance(value, int)
+                and not isinstance(value, bool)
+            ):
+                integrity[name] += value
         return calibration_report(
-            records, explicit_enable=bool(state.get("explicit_enable", False))
+            self._calibration_records(),
+            explicit_enable=bool(state.get("explicit_enable", False)),
+            integrity=integrity,
+            approval_threshold=float(state.get("approval_threshold", 0.95)),
         )
 
     def _auto_review_policy(self) -> AutoReviewPolicy:
@@ -487,6 +585,44 @@ class ReviewService:
         """Create a provenance-preserving Codex-approved dataset candidate."""
         second_pass = review.get("second_pass", {})
         if second_pass.get("review_status") != "codex_approved":
+            return
+        failures = []
+        provenance = second_pass.get("provenance", {})
+        if not provenance.get("source_hashes"):
+            failures.append("source_hashes_missing")
+        if provenance.get("circular_warnings"):
+            failures.append("circular_provenance")
+        candidates = {item.question_id: item for item in self._load_candidates()}
+        source_candidate = candidates.get(review.get("question_id"))
+        if source_candidate is not None and (
+            source_candidate.metadata.get("test_only")
+            or source_candidate.metadata.get("test_only_paper_ids")
+        ):
+            failures.append("test_only_leakage")
+        identity = content_sha256(
+            {
+                "question": review.get("question"),
+                "answer": review.get("answer", {}).get("answer_text"),
+                "paper_ids": review.get("paper_ids", []),
+            }
+        )
+        for correction in self._load_corrections():
+            correction_identity = content_sha256(
+                {
+                    "question": correction.turns[-1].content,
+                    "answer": correction.final_answer,
+                    "paper_ids": list(correction.paper_ids),
+                }
+            )
+            if correction_identity == identity:
+                failures.append("duplicate_training_candidate")
+                break
+        if failures:
+            second_pass["review_status"] = "needs_human_review"
+            second_pass["human_review_route"] = "approval_integrity_failure"
+            second_pass["approval_integrity_failures"] = failures
+            review["review_status"] = "needs_human_review"
+            review["decision"] = "pending_user_review"
             return
         interaction_id = review.get("interaction_id")
         if not isinstance(interaction_id, str):
@@ -704,6 +840,403 @@ class ReviewService:
             self._save_candidates(list(by_id.values()))
         return [item.to_dict() for item in variations]
 
+    def create_calibration_sample(
+        self, *, target_count: int = 50, seed: int = 42
+    ) -> dict[str, Any]:
+        """Persist a deterministic, coverage-seeking calibration work queue."""
+        with self._lock:
+            result = select_calibration_sample(
+                self._all_automatic_reviews(), target_count=target_count, seed=seed
+            )
+            result.update(
+                {
+                    "sample_id": _identifier("calibration_sample"),
+                    "created_at": _timestamp(),
+                    "format_version": 1,
+                }
+            )
+            atomic_write_json(self.calibration_sample_path, result)
+        return result
+
+    def _review_by_id(self, review_id: str) -> dict[str, Any]:
+        matches = [
+            item
+            for item in self._all_automatic_reviews()
+            if item.get("review_id") == review_id
+        ]
+        if len(matches) != 1:
+            raise ValueError(f"Unknown review_id: {review_id}")
+        return matches[0]
+
+    def calibration_cards(self) -> list[dict[str, Any]]:
+        """Return sampled review snapshots enriched with human decision state."""
+        sample = load_json_object(
+            self.calibration_sample_path,
+            default={"review_ids": [], "items": [], "coverage_gaps": []},
+        )
+        decisions = {
+            item.get("review_id"): item
+            for item in load_json_list(self.calibration_pairs_path)
+        }
+        papers = {item["document_id"]: item for item in self.list_papers()}
+        cards = []
+        for review_id in sample.get("review_ids", []):
+            try:
+                review = deepcopy(self._review_by_id(review_id))
+            except ValueError:
+                cards.append(
+                    {
+                        "review_id": review_id,
+                        "unavailable": True,
+                        "error": "The linked review is no longer available.",
+                    }
+                )
+                continue
+            review["paper_metadata"] = [
+                papers[paper_id]
+                for paper_id in review.get("paper_ids", [])
+                if paper_id in papers
+            ]
+            review["calibration_decision"] = decisions.get(review_id)
+            second = review.get("second_pass", {})
+            review["root_cause"] = sorted(
+                {
+                    gate
+                    for result in second.get("reviewer_results", [])
+                    for gate, passed in result.get("gates", {}).items()
+                    if not passed
+                }
+            )
+            cards.append(review)
+        return cards
+
+    def rerun_historical_reviews(
+        self, *, review_ids: tuple[str, ...] | None = None
+    ) -> dict[str, Any]:
+        """Append linked modern reruns while preserving original review snapshots."""
+        if review_ids is not None and (
+            not isinstance(review_ids, tuple)
+            or not all(isinstance(item, str) and item.strip() for item in review_ids)
+        ):
+            raise TypeError("review_ids must be None or a tuple of non-empty strings.")
+        originals = [
+            review
+            for batch in self._load_automatic_review_batches()
+            for review in batch.get("reviews", [])
+        ]
+        requested = set(review_ids or (item.get("review_id") for item in originals))
+        candidates = {item.question_id: item for item in self._load_candidates()}
+        appended = []
+        with self._lock:
+            records = load_json_list(self.historical_reruns_path)
+            for original in originals:
+                original_id = original.get("review_id")
+                if original_id not in requested:
+                    continue
+                candidate = candidates.get(original.get("question_id"))
+                if candidate is None:
+                    continue
+                rerun_batch_id = _identifier("historical_rerun")
+                try:
+                    interaction = self.run_question(candidate.question_id)
+                    new_review = propose_automatic_review(
+                        interaction,
+                        candidate,
+                        batch_id=rerun_batch_id,
+                        policy=self._auto_review_policy(),
+                    )
+                except Exception as error:
+                    new_review = propose_automatic_failure_review(
+                        candidate,
+                        batch_id=rerun_batch_id,
+                        error=error,
+                        policy=self._auto_review_policy(),
+                    )
+                new_review["review_id"] = original_id
+                record = {
+                    "rerun_id": rerun_batch_id,
+                    "original_review_id": original_id,
+                    "original_snapshot": deepcopy(original),
+                    "original_snapshot_hash": content_sha256(original),
+                    "new_review": new_review,
+                    "new_snapshot_hash": content_sha256(new_review),
+                    "created_at": _timestamp(),
+                    "non_destructive": True,
+                }
+                records.append(record)
+                appended.append(record)
+            missing = requested - {item.get("original_review_id") for item in appended}
+            if missing:
+                raise ValueError(
+                    f"Historical review IDs could not be rerun: {sorted(missing)}"
+                )
+            atomic_write_json(self.historical_reruns_path, records)
+        return {"rerun_count": len(appended), "reruns": appended}
+
+    def record_calibration_decision(
+        self,
+        *,
+        review_id: str,
+        action: str,
+        reviewer: str,
+        edits: dict[str, Any] | None = None,
+    ) -> dict[str, Any]:
+        """Record one human calibration label; never approve it for training."""
+        review_id = _nonempty_text(review_id, "review_id", maximum=200)
+        reviewer = _nonempty_text(reviewer, "reviewer", maximum=500)
+        actions = {
+            "approve_auto": None,
+            "override_correct": "correct",
+            "override_partial": "partial",
+            "override_incorrect": "incorrect",
+            "override_should_abstain": "should_abstain",
+            "benchmark_problem": "benchmark_problem",
+            "skip": None,
+        }
+        if action not in actions:
+            raise ValueError(f"action must be one of {sorted(actions)}.")
+        if edits is not None and not isinstance(edits, dict):
+            raise TypeError("edits must be an object or None.")
+        with self._lock:
+            reviews = {
+                item.get("review_id"): item for item in self._all_automatic_reviews()
+            }
+            if review_id not in reviews:
+                raise ValueError(f"Unknown review_id: {review_id}")
+            existing = load_json_list(self.calibration_pairs_path)
+            if any(
+                item.get("review_id") == review_id and item.get("status") == "finalized"
+                for item in existing
+            ):
+                raise ValueError(
+                    "This calibration review already has a finalized decision."
+                )
+            review = deepcopy(reviews[review_id])
+            original_snapshot = deepcopy(review)
+            before_hash = content_sha256(review)
+            allowed_edits = {
+                "answer_text",
+                "evidence_ids",
+                "required_facts",
+                "prohibited_claims",
+                "structured_target",
+                "citations",
+            }
+            unknown = set(edits or {}) - allowed_edits
+            if unknown:
+                raise ValueError(
+                    f"Unsupported calibration edit fields: {sorted(unknown)}"
+                )
+            if edits:
+                if "answer_text" in edits:
+                    review.setdefault("answer", {})["answer_text"] = _nonempty_text(
+                        edits["answer_text"], "answer_text", maximum=100_000
+                    )
+                for field in (
+                    "required_facts",
+                    "prohibited_claims",
+                    "evidence_ids",
+                    "citations",
+                ):
+                    if field in edits and not isinstance(edits[field], list):
+                        raise TypeError(f"{field} must be a list.")
+                    if field in edits and not all(
+                        isinstance(value, str) and value.strip()
+                        for value in edits[field]
+                    ):
+                        raise ValueError(f"{field} values must be non-empty strings.")
+                if "required_facts" in edits:
+                    review["proposed_required_facts"] = edits["required_facts"]
+                if "prohibited_claims" in edits:
+                    review["proposed_prohibited_claims"] = edits["prohibited_claims"]
+                if "evidence_ids" in edits:
+                    review["proposed_evidence_ids"] = edits["evidence_ids"]
+                if "structured_target" in edits:
+                    if not isinstance(edits["structured_target"], dict):
+                        raise TypeError("structured_target must be an object.")
+                    review["structured_target"] = edits["structured_target"]
+                if "citations" in edits:
+                    review["citations"] = edits["citations"]
+                candidate_matches = [
+                    item
+                    for item in self._load_candidates()
+                    if item.question_id == review.get("question_id")
+                ]
+                candidate = (
+                    candidate_matches[0]
+                    if len(candidate_matches) == 1
+                    else QuestionCandidate.create(
+                        paper_ids=tuple(review.get("paper_ids", [])),
+                        question=review.get("question", "Calibration question"),
+                        question_type=review.get("question_type", "user_authored"),
+                        required_concepts=tuple(
+                            review.get("proposed_required_facts", [])
+                        ),
+                        prohibited_claims=tuple(
+                            review.get("proposed_prohibited_claims", [])
+                        ),
+                        metadata={"reconstructed_for_calibration": True},
+                    )
+                )
+                revalidation = review_interaction_second_pass(
+                    {
+                        "paper_ids": list(review.get("paper_ids", [])),
+                        "question": review.get("question", ""),
+                        "answer": review.get("answer", {}),
+                        "diagnostics": review.get("diagnostics", {}),
+                    },
+                    candidate,
+                    policy=self._auto_review_policy(),
+                    corrected_answer=review.get("answer", {}).get("answer_text"),
+                ).to_dict()
+                review["edit_revalidation"] = revalidation
+            proposed_label = review.get("proposed_label", "partial")
+            human_label = (
+                proposed_label if action == "approve_auto" else actions[action]
+            )
+            if action == "skip":
+                pair = {
+                    "pair_id": _identifier("calibration_skip"),
+                    "review_id": review_id,
+                    "status": "skipped",
+                    "reviewer": reviewer,
+                    "recorded_at": _timestamp(),
+                    "training_approved": False,
+                }
+            else:
+                if human_label not in REVIEW_LABELS:
+                    raise ValueError("Calibration decision produced an invalid label.")
+                second = review.get("second_pass", {})
+                automatic = bool(
+                    second.get(
+                        "would_approve_if_enabled",
+                        second.get("review_status") == "codex_approved",
+                    )
+                )
+                confidence = float(
+                    second.get("confidence", review.get("proposed_confidence", 0.0))
+                )
+                failures = sorted(
+                    {
+                        gate
+                        for result in second.get("reviewer_results", [])
+                        for gate, passed in result.get("gates", {}).items()
+                        if not passed
+                    }
+                )
+                pair = {
+                    "pair_id": _identifier("calibration_pair"),
+                    "review_id": review_id,
+                    "status": "finalized",
+                    "action": action,
+                    "reviewer": reviewer,
+                    "recorded_at": _timestamp(),
+                    "confidence": confidence,
+                    "automated_label": proposed_label,
+                    "human_label": human_label,
+                    "automated_approved": automatic,
+                    "human_approved": human_label == "correct",
+                    "question_type": review.get("question_type", "unknown"),
+                    "paper_ids": list(review.get("paper_ids", [])),
+                    "failure_categories": failures,
+                    "mandatory_human_categories": list(
+                        second.get("mandatory_human_categories", [])
+                    ),
+                    "reviewer_profile": ",".join(
+                        item.get("reviewer_profile", "unknown")
+                        for item in second.get("reviewer_results", [])
+                    )
+                    or "unknown",
+                    "original_snapshot_hash": before_hash,
+                    "original_snapshot": original_snapshot,
+                    "reviewed_snapshot": review,
+                    "reviewed_snapshot_hash": content_sha256(review),
+                    "edited": bool(edits),
+                    "correction_revalidated": bool(edits),
+                    "revalidation": review.get("edit_revalidation"),
+                    "edits": edits or {},
+                    "training_approved": False,
+                    "training_example_id": None,
+                }
+            existing.append(pair)
+            atomic_write_json(self.calibration_pairs_path, existing)
+        return pair
+
+    def approve_calibration_for_training(
+        self, *, pair_id: str, reviewer: str
+    ) -> dict[str, Any]:
+        """Separately approve an eligible finalized calibration pair for export."""
+        pair_id = _nonempty_text(pair_id, "pair_id", maximum=200)
+        reviewer = _nonempty_text(reviewer, "reviewer", maximum=500)
+        with self._lock:
+            pairs = load_json_list(self.calibration_pairs_path)
+            matches = [item for item in pairs if item.get("pair_id") == pair_id]
+            if len(matches) != 1:
+                raise ValueError(f"Unknown pair_id: {pair_id}")
+            pair = matches[0]
+            if pair.get("status") != "finalized":
+                raise ValueError(
+                    "Only finalized calibration pairs can enter training review."
+                )
+            if pair.get("training_approved"):
+                raise ValueError(
+                    "This calibration pair already entered training approval."
+                )
+            if pair.get("human_label") in {"benchmark_problem", "should_abstain"}:
+                raise ValueError("This label is not eligible for a correction target.")
+            snapshot = pair.get("reviewed_snapshot", {})
+            interaction_id = snapshot.get("interaction_id")
+            if not isinstance(interaction_id, str):
+                raise ValueError(
+                    "The calibration snapshot has no reviewable interaction."
+                )
+            correction = self.review_interaction(
+                interaction_id=interaction_id,
+                review_label=pair["human_label"],
+                corrected_answer=snapshot.get("answer", {}).get("answer_text"),
+                required_facts=tuple(snapshot.get("proposed_required_facts", [])),
+                prohibited_claims=tuple(snapshot.get("proposed_prohibited_claims", [])),
+                replacement_evidence_ids=tuple(
+                    snapshot.get("proposed_evidence_ids", [])
+                ),
+                notes=f"Calibration pair {pair_id}; separate human training approval.",
+            )
+            approved = self.approve_correction(
+                example_id=correction["example_id"], reviewer=reviewer
+            )
+            pair["training_approved"] = True
+            pair["training_example_id"] = approved["example_id"]
+            pair["training_approved_at"] = _timestamp()
+            atomic_write_json(self.calibration_pairs_path, pairs)
+        return pair
+
+    def add_acquisition_item(self, **values: Any) -> dict[str, Any]:
+        """Add a local paper suggestion; this method never fetches the paper."""
+        item = PaperAcquisitionItem(**values)
+        with self._lock:
+            items = load_json_list(self.acquisition_queue_path)
+            if any(existing.get("item_id") == item.item_id for existing in items):
+                raise ValueError("This paper is already in the acquisition queue.")
+            state = {**item.to_dict(), "created_at": _timestamp()}
+            items.append(state)
+            atomic_write_json(self.acquisition_queue_path, items)
+        return state
+
+    def update_acquisition_item(self, *, item_id: str, status: str) -> dict[str, Any]:
+        """Update queue status without downloading or opening a network resource."""
+        item_id = _nonempty_text(item_id, "item_id", maximum=200)
+        if status not in {"suggested", "obtained", "declined"}:
+            raise ValueError("status must be suggested, obtained, or declined.")
+        with self._lock:
+            items = load_json_list(self.acquisition_queue_path)
+            matches = [item for item in items if item.get("item_id") == item_id]
+            if len(matches) != 1:
+                raise ValueError(f"Unknown acquisition item: {item_id}")
+            matches[0]["status"] = status
+            matches[0]["updated_at"] = _timestamp()
+            atomic_write_json(self.acquisition_queue_path, items)
+        return matches[0]
+
     def state(self) -> dict[str, Any]:
         """Return the complete lightweight browser bootstrap state."""
         with self._lock:
@@ -732,7 +1265,7 @@ class ReviewService:
             ):
                 confidence_values.append(float(confidence))
         calibration = self._calibration()
-        calibration_records = self._review_policy_state().get("calibration_records", [])
+        calibration_records = self._calibration_records()
         false_approvals = sum(
             item.get("automated_approved") is True
             and item.get("human_approved") is False
@@ -782,7 +1315,19 @@ class ReviewService:
                     questions, key=lambda item: review_priority(item.to_dict())
                 )
             ],
-            "corrections": [item.to_dict() for item in corrections[-50:]],
+            "corrections": [
+                {
+                    **item.to_dict(),
+                    "effective_trust_status": (
+                        "audited_codex_approved"
+                        if item.review_status == "codex_approved"
+                        and item.metadata.get("audit_status")
+                        in {"human_confirmed", "passed"}
+                        else item.review_status
+                    ),
+                }
+                for item in corrections[-50:]
+            ],
             "interaction_count": len(interactions),
             "feedback_count": len(feedback),
             "question_count": len(questions),
@@ -819,7 +1364,20 @@ class ReviewService:
                 "failure_type_distribution": dict(sorted(failed_gate_counts.items())),
             },
             "calibration": calibration,
+            "calibration_sample": load_json_object(
+                self.calibration_sample_path,
+                default={
+                    "review_ids": [],
+                    "items": [],
+                    "selected_count": 0,
+                    "coverage_gaps": [],
+                    "warnings": [],
+                },
+            ),
+            "calibration_cards": self.calibration_cards(),
+            "calibration_pairs": load_json_list(self.calibration_pairs_path),
             "audit_queue": audit_queue,
+            "paper_acquisition_queue": load_json_list(self.acquisition_queue_path),
             "paper_splits": paper_splits,
             "dataset_metrics": metrics,
             "dataset_warnings": list(diversity_warnings(metrics)),
@@ -835,6 +1393,10 @@ class ReviewService:
                 "automatic_reviews": str(self.automatic_reviews_path),
                 "review_policy": str(self.review_policy_path),
                 "audit_queue": str(self.audit_queue_path),
+                "calibration_sample": str(self.calibration_sample_path),
+                "calibration_pairs": str(self.calibration_pairs_path),
+                "historical_reruns": str(self.historical_reruns_path),
+                "paper_acquisition_queue": str(self.acquisition_queue_path),
             },
             "privacy": (
                 "Files and review records stay on this machine. "
@@ -1455,7 +2017,10 @@ class ReviewService:
             state = self._review_policy_state()
             if enabled:
                 eligible = calibration_report(
-                    state.get("calibration_records", []), explicit_enable=False
+                    self._calibration_records(),
+                    explicit_enable=False,
+                    integrity=state.get("integrity", {}),
+                    approval_threshold=float(state.get("approval_threshold", 0.95)),
                 )
                 if eligible["state"] != "calibration_active":
                     raise ValueError(
@@ -1466,6 +2031,52 @@ class ReviewService:
             state["updated_at"] = _timestamp()
             atomic_write_json(self.review_policy_path, state)
         return self._calibration()
+
+    def bulk_auto_review(self, *, eligible_only: bool = True) -> dict[str, Any]:
+        """Run pending candidates only after explicit calibration activation."""
+        if eligible_only is not True:
+            raise ValueError(
+                "Bulk review requires eligible_only=True in production mode."
+            )
+        calibration = self._calibration()
+        if calibration["state"] != "auto_approval_enabled":
+            raise ValueError(
+                "Bulk automatic approval is locked: "
+                + "; ".join(calibration["reasons"])
+            )
+        previous_question_ids = {
+            review.get("question_id")
+            for batch in self._load_automatic_review_batches()
+            for review in batch.get("reviews", [])
+        }
+        candidates = [
+            item
+            for item in self._load_candidates()
+            if item.review_status == "proposed"
+            and item.question_id not in previous_question_ids
+            and not bool(item.metadata.get("test_only", False))
+        ]
+        if not candidates:
+            raise ValueError(
+                "No eligible pending questions are available for bulk review."
+            )
+        if len(candidates) > 200:
+            candidates = candidates[:200]
+        paper_ids = tuple(
+            sorted({paper for item in candidates for paper in item.paper_ids})
+        )
+        batch = self.run_automatic_review_batch(
+            paper_ids=paper_ids,
+            question_ids=tuple(item.question_id for item in candidates),
+            generate_if_empty=False,
+        )
+        audit = self.create_audit_sample(sample_fraction=0.10, seed=42)
+        return {
+            "batch": batch,
+            "audit": audit,
+            "eligible_only": True,
+            "human_audit_still_required": True,
+        }
 
     def finalize_automatic_review_batch(
         self,
@@ -1916,7 +2527,7 @@ class ReviewService:
             corrections = tuple(self._load_corrections())
             dataset = build_dataset(
                 corrections,
-                dataset_version="1.2.1",
+                dataset_version="1.2.2",
                 seed=seed,
                 manual_paper_splits=manual_paper_splits,
                 trust_tier=trust_tier,

@@ -42,6 +42,8 @@ corrections, opt-in session preferences, and dataset exports live under
 12. Create the deterministic audit queue and inspect mandatory-risk items.
 13. Export an explicit trust tier with weights, duplicate control, paper-level
     splits, and a diversity report.
+14. Use **Calibration** to validate a deterministic 50–100 item representative
+    sample. Calibration approval is not training approval.
 
 Automatic question generation, prompt variation, grading, and correction text
 are suggestions. None are approved automatically. A second explicit approval
@@ -152,6 +154,19 @@ python3 -m localml_scholar.evaluation.cli audit-sample \
   --repository . --rate 0.10 --seed 42
 
 python3 -m localml_scholar.evaluation.cli calibration-report --repository .
+
+python3 -m localml_scholar.evaluation.cli calibration-sample \
+  --repository . --count 50 --seed 42
+
+python3 -m localml_scholar.evaluation.cli rerun-historical-reviews \
+  --repository . --sample-only
+
+python3 -m localml_scholar.evaluation.cli calibration-status --repository .
+
+python3 -m localml_scholar.evaluation.cli enable-auto-approval --repository .
+
+python3 -m localml_scholar.evaluation.cli bulk-auto-review \
+  --repository . --eligible-only
 
 python3 -m localml_scholar.evaluation.cli export-trust-tier \
   --repository . --trust-tier human-and-audited \

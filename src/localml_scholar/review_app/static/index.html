@@ -18,6 +18,7 @@
       <button class="nav-link" data-view="benchmarks">Benchmarks <span id="question-count">0</span></button>
       <button class="nav-link" data-view="automation">Auto-review <span id="automation-count">0</span></button>
       <button class="nav-link" data-view="review">Review <span id="review-count">0</span></button>
+      <button class="nav-link" data-view="calibration">Calibration <span id="calibration-count">0</span></button>
       <button class="nav-link" data-view="corrections">Corrections <span id="correction-count">0</span></button>
       <button class="nav-link" data-view="dataset">Dataset</button>
       <button class="nav-link" data-view="evaluation">Evaluation</button>
@@ -101,6 +102,38 @@
       </article>
       <div class="section-heading"><div><p class="eyebrow">02 · FINAL CHECK</p><h2>Review the proposed reviews</h2></div><p>Edit any draft, exclude it, or explicitly save the selected drafts as your reviews.</p></div>
       <div id="automatic-batches"></div>
+    </section>
+
+    <section class="view" id="view-calibration">
+      <div class="section-heading"><div><p class="eyebrow">ONE-CLICK HUMAN VALIDATION</p><h2>Calibration Lab</h2></div><p>Validate a representative sample before any bulk automatic approval. Confidence is a heuristic score—not a probability.</p></div>
+      <div class="workspace-grid equal">
+        <article class="panel">
+          <p class="panel-kicker">READINESS</p><h3>False approvals are the primary risk</h3>
+          <div id="calibration-metrics"></div>
+          <label>Reviewer name or local identifier<input id="calibration-reviewer" autocomplete="name" placeholder="Example: Emmet"></label>
+          <div class="form-actions"><button id="create-calibration-sample" type="button">Create 50-item sample</button><button id="rerun-historical" type="button" class="secondary">Rerun sampled historical reviews</button><button id="enable-calibrated-approval" type="button" class="secondary">Explicitly enable approval</button><button id="bulk-auto-review" type="button" class="secondary">Bulk-review eligible pending</button></div>
+          <p class="microcopy">Keys: A approve · C correct · P partial · I incorrect · S should abstain · B benchmark problem · E focus edit. Shortcuts apply only to the first unfinished visible card.</p>
+        </article>
+        <article class="panel">
+          <p class="panel-kicker">COVERAGE</p><h3>Representative—not merely random</h3>
+          <div id="calibration-coverage"></div>
+          <p class="microcopy">Target 50 for the first operating pass; 75–100 gives stronger coverage. Six papers are enough to test the workflow, not enough for pretraining claims.</p>
+        </article>
+      </div>
+      <div id="calibration-cards" class="calibration-list"></div>
+      <div class="section-heading"><div><p class="eyebrow">LOCAL ACQUISITION QUEUE</p><h2>Plan corpus expansion</h2></div><p>Suggestions are stored locally. This interface never downloads papers.</p></div>
+      <div class="workspace-grid equal">
+        <form id="acquisition-form" class="panel">
+          <label>Title<input id="acquisition-title" required></label>
+          <label>DOI <span>optional</span><input id="acquisition-doi"></label>
+          <label>arXiv ID <span>optional</span><input id="acquisition-arxiv"></label>
+          <label>Citation <span>optional</span><textarea id="acquisition-citation" rows="2"></textarea></label>
+          <label>Why add it?<textarea id="acquisition-reason" rows="3" required></textarea></label>
+          <label>Category<input id="acquisition-category" placeholder="architecture, optimization, alignment…" required></label>
+          <button type="submit">Add local suggestion</button>
+        </form>
+        <div id="acquisition-list" class="review-list"></div>
+      </div>
     </section>
 
     <section class="view" id="view-review">

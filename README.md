@@ -21,12 +21,12 @@ framework or automatic-differentiation system. This is an educational and
 engineering constraint, not a claim that a from-scratch model is automatically
 faster or more capable.
 
-## Current status: Milestone 12A.1
+## Current status: Milestone 12A.2
 
-The package version is `1.2.1`.
+The package version is `1.2.2`.
 
-Milestone 12A.1 adds confidence-gated second-pass review without treating
-automation as human gold:
+Milestone 12A.2 adds a dedicated Calibration Lab without treating automation
+as human gold:
 
 - permanent human/Codex approval and rejection states
 - 16 mandatory approval gates with a default 0.95 threshold
@@ -38,6 +38,12 @@ automation as human gold:
 - human-only, human-and-audited, and explicit Codex-inclusive trust tiers
 - provenance hashes, circular self-training warnings, and duplicate clusters
 - paper-level split and explicit test-only leakage protection
+- representative sampling across papers, question types, labels, confidence
+  bands, abstentions, and failures
+- one-click and keyboard validation with append-only historical reruns
+- false-approval-first readiness metrics and exact activation blockers
+- explicit bulk enable, mandatory auditing, and separate training approval
+- a local paper acquisition queue that never fetches sources
 
 No transformer training occurs in this milestone. The application uses only
 papers the user supplies locally; it does not discover or download papers.
@@ -375,6 +381,8 @@ The human-in-the-loop interface supports:
   corrected answers
 - a separate human approval gate and paper-split dataset export
 - local progress, diversity, and evaluation dashboards
+- a dedicated Calibration page with coverage gaps, readiness checks, editable
+  validation cards, keyboard labels, and acquisition planning
 
 The Review Lab binds only to `127.0.0.1`; browser assets, papers, indexes,
 interactions, and reviews stay on the machine. In-memory conversation state is
@@ -402,6 +410,8 @@ Open `http://127.0.0.1:8765`. Uploaded files are limited to 30 MiB.
 Image-only/scanned PDFs require OCR before ingestion. PDF extraction remains
 text-only and cannot interpret figures, visual equations, or complex layout.
 See [the Paper Training Lab guide](docs/training/paper_training_lab.md),
+[Calibration Lab guide](docs/training/calibration_lab.md),
+[bulk automatic-approval policy](docs/training/bulk_auto_approval_policy.md),
 [adaptive profile specification](docs/training/adaptive_instruction_profiles.md),
 [dataset schema guide](docs/training/grounded_instruction_dataset.md), and
 [paper-split policy](docs/training/paper_level_data_splits.md).
@@ -741,6 +751,33 @@ approved its correction, exported one `human-and-audited` example, and selected
 one deterministic audit item. The smoke used a temporary directory and did not
 alter the user's corpus or tracked outputs. These checks validate workflow and
 policy behavior, not semantic review quality.
+
+Milestone 12A.2 was verified on 2026-08-08 with:
+
+```bash
+python3 -m ruff check .
+python3 -m ruff format --check .
+node --check src/localml_scholar/review_app/static/app.js
+git diff --check
+python3 -m pytest -q
+PYTHONPATH=src python3 -m localml_scholar.evaluation.cli --help
+PYTHONPATH=src python3 -m localml_scholar.evaluation.cli calibration-sample --help
+PYTHONPATH=src python3 -m localml_scholar.evaluation.cli rerun-historical-reviews --help
+PYTHONPATH=src python3 -m localml_scholar.evaluation.cli calibration-report --help
+PYTHONPATH=src python3 -m localml_scholar.evaluation.cli calibration-status --help
+PYTHONPATH=src python3 -m localml_scholar.evaluation.cli enable-auto-approval --help
+PYTHONPATH=src python3 -m localml_scholar.evaluation.cli bulk-auto-review --help
+PYTHONPATH=src python3 -c "import localml_scholar; print(localml_scholar.__version__)"
+```
+
+Ruff lint and formatting, JavaScript syntax, and `git diff --check` were clean;
+the complete suite reported `791 passed in 10.23s`; and version `1.2.2`
+imported correctly. An isolated 50-pair calibration smoke selected all 50
+reviews with no coverage gaps, reported precision/agreement 1.0 with zero
+false approvals and no integrity failures, remained locked in
+`calibration_active`, and changed to `auto_approval_enabled` only after the
+explicit enable command. The smoke fixture is not a capability result and did
+not alter the repository's real paper corpus or review artifacts.
 
 The 55-parameter deterministic attention inspection reported exact tensor
 shapes, scaled scores, the causal mask, probabilities, synthetic loss, and
@@ -1537,9 +1574,9 @@ Mathematical details are in:
 
 The next recommended milestone is:
 
-> Milestone 12B: grounded instruction tuning and model comparison using
-> human-approved training examples, with paper-level held-out evaluation and
-> deterministic extractive answering retained as the trusted baseline.
+> Milestone 12B: grounded instruction tuning of the custom local transformer
+> using trusted examples, with paper-level held-out evaluation and deterministic
+> extractive answering retained as the trusted baseline.
 
 See [the full roadmap](docs/roadmap.md) and
 [the architecture](docs/architecture.md).
