@@ -358,6 +358,7 @@ class QuestionCandidate:
     paper_ids: tuple[str, ...]
     question: str
     question_type: str
+    expected_answerability: str = "answerable"
     expected_sections: tuple[str, ...] = ()
     required_concepts: tuple[str, ...] = ()
     prohibited_claims: tuple[str, ...] = ()
@@ -373,6 +374,13 @@ class QuestionCandidate:
         object.__setattr__(
             self, "question_type", _text(self.question_type, "question_type")
         )
+        if self.expected_answerability not in {
+            "answerable",
+            "partial",
+            "abstain",
+            "external_required",
+        }:
+            raise ValueError("expected_answerability uses an unknown policy value.")
         for name in ("expected_sections", "required_concepts", "prohibited_claims"):
             value = getattr(self, name)
             object.__setattr__(self, name, _text_tuple(value, name) if value else ())
@@ -423,6 +431,7 @@ class QuestionCandidate:
             "paper_ids": list(self.paper_ids),
             "question": self.question,
             "question_type": self.question_type,
+            "expected_answerability": self.expected_answerability,
             "expected_sections": list(self.expected_sections),
             "required_concepts": list(self.required_concepts),
             "prohibited_claims": list(self.prohibited_claims),

@@ -13,6 +13,11 @@ from typing import Any, Protocol
 
 from localml_scholar._version import __version__
 from localml_scholar.training_data.provenance import content_sha256
+from localml_scholar.training_data.reviewer_reliability import (
+    CANONICAL_REVIEW_POLICY,
+    REVIEW_POLICY_VERSION,
+    canonical_policy_payload,
+)
 
 PASS_NAMES = (
     "answerer",
@@ -63,6 +68,8 @@ class CodexReview:
     abstention_required: bool = False
     uncertainty_reasons: tuple[str, ...] = ()
     rationale: str = ""
+    policy_outcome: str | None = None
+    claim_critiques: tuple[dict[str, Any], ...] = ()
 
     def __post_init__(self) -> None:
         if self.decision not in DECISIONS:
@@ -101,6 +108,40 @@ class CodexReview:
             raise TypeError("abstention_required must be boolean.")
         if not isinstance(self.rationale, str) or not self.rationale.strip():
             raise ValueError("rationale must contain non-whitespace text.")
+        allowed_outcomes = {
+            "direct",
+            "partial",
+            "insufficient",
+            "irrelevant",
+            "external_required",
+            "supported",
+            "unsupported",
+            "complete",
+            "incomplete",
+            "correct_abstention",
+            "incorrect_abstention",
+            "supports",
+            "wrong_source",
+            "wrong_span",
+            "missing",
+            "malformed",
+            "eligible",
+            "excluded",
+        }
+        if (
+            self.policy_outcome is not None
+            and self.policy_outcome not in allowed_outcomes
+        ):
+            raise ValueError(
+                "policy_outcome must use the canonical reviewer vocabulary or be None."
+            )
+        if not isinstance(self.claim_critiques, (tuple, list)) or not all(
+            isinstance(item, dict) for item in self.claim_critiques
+        ):
+            raise TypeError("claim_critiques must be a sequence of dictionaries.")
+        object.__setattr__(
+            self, "claim_critiques", tuple(dict(item) for item in self.claim_critiques)
+        )
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -116,6 +157,8 @@ class CodexReview:
             "abstention_required": self.abstention_required,
             "uncertainty_reasons": list(self.uncertainty_reasons),
             "rationale": self.rationale,
+            "policy_outcome": self.policy_outcome,
+            "claim_critiques": [dict(item) for item in self.claim_critiques],
         }
 
     @classmethod
@@ -135,8 +178,13 @@ class CodexReview:
             "abstention_required",
             "uncertainty_reasons",
             "rationale",
+            "policy_outcome",
+            "claim_critiques",
         }
-        if set(value) != expected:
+        legacy_expected = expected - {"policy_outcome", "claim_critiques"}
+        if set(value) == legacy_expected:
+            value = {**value, "policy_outcome": None, "claim_critiques": []}
+        elif set(value) != expected:
             missing = sorted(expected - set(value))
             extra = sorted(set(value) - expected)
             raise ValueError(
@@ -254,6 +302,78 @@ def codex_review_json_schema() -> dict[str, Any]:
         "corrected_answer": {"type": ["string", "null"]},
         "abstention_required": {"type": "boolean"},
         "rationale": {"type": "string"},
+        "policy_outcome": {
+            "type": ["string", "null"],
+            "enum": [
+                None,
+                "direct",
+                "partial",
+                "insufficient",
+                "irrelevant",
+                "external_required",
+                "supported",
+                "unsupported",
+                "complete",
+                "incomplete",
+                "correct_abstention",
+                "incorrect_abstention",
+                "supports",
+                "wrong_source",
+                "wrong_span",
+                "missing",
+                "malformed",
+                "eligible",
+                "excluded",
+            ],
+        },
+        "claim_critiques": {
+            "type": "array",
+            "items": {
+                "type": "object",
+                "additionalProperties": False,
+                "required": [
+                    "claim_id",
+                    "support_status",
+                    "relevance_status",
+                    "source_match",
+                    "missing_information",
+                    "confidence",
+                ],
+                "properties": {
+                    "claim_id": {"type": "string"},
+                    "support_status": {
+                        "type": "string",
+                        "enum": [
+                            "supports",
+                            "partial",
+                            "wrong_source",
+                            "wrong_span",
+                            "irrelevant",
+                            "missing",
+                            "malformed",
+                        ],
+                    },
+                    "relevance_status": {
+                        "type": "string",
+                        "enum": [
+                            "supports",
+                            "partial",
+                            "wrong_source",
+                            "wrong_span",
+                            "irrelevant",
+                            "missing",
+                            "malformed",
+                        ],
+                    },
+                    "source_match": {"type": "boolean"},
+                    "missing_information": {
+                        "type": "array",
+                        "items": {"type": "string"},
+                    },
+                    "confidence": {"type": "number", "minimum": 0, "maximum": 1},
+                },
+            },
+        },
     }
     return {
         "type": "object",
@@ -265,24 +385,30 @@ def codex_review_json_schema() -> dict[str, Any]:
 
 _PASS_INSTRUCTIONS = {
     "answerer": (
-        "Build the answer evidence-first. Select supported facts, construct the "
-        "target, then write and cite the answer. Never invent missing facts."
+        "Build atomic facts before prose. Return every proposed factual clause in "
+        "corrected_target with provenance and evidence IDs. corrected_answer is "
+        "audit-only: the application will discard it and compose solely from the "
+        "validated claim graph. Never invent missing facts."
     ),
     "evidence_critic": (
-        "Judge only whether the raw evidence can answer the question and support "
-        "the intended facts. Ignore prose quality and all prior confidence."
+        "Judge only whether the passages can support a correct answer to the "
+        "question. Do not inspect or grade answer prose. Set policy_outcome to "
+        "direct, partial, insufficient, irrelevant, or external_required."
     ),
     "answer_critic": (
-        "Judge correctness, relevance, completeness, unsupported claims, and "
-        "instruction following. Ignore retrieval scores and prior decisions."
+        "Judge directness, factual support, completeness, unsupported claims, "
+        "instruction following, overgeneralization, and abstention correctness. "
+        "Do not grade retrieval rank or score."
     ),
     "citation_critic": (
-        "Verify every claim-to-source mapping. Do not infer or predict the final "
-        "acceptance decision."
+        "Evaluate each supplied atomic claim only against its cited passages. "
+        "Return one claim_critiques item per claim. Do not grade prose quality or "
+        "predict final acceptance."
     ),
     "final_adjudicator": (
-        "Review the raw evidence and focused critic results. Accept only when all "
-        "required checks pass; otherwise repair, reject, or mark uncertain."
+        "Apply the supplied deterministic conflict policy first, then resolve only "
+        "remaining semantic ambiguity. Explain the exact conflict that controls "
+        "the decision."
     ),
 }
 
@@ -297,9 +423,16 @@ def blind_payload(pass_name: str, payload: dict[str, Any]) -> dict[str, Any]:
         "conversation_context": payload.get("conversation_context", []),
         "instruction_profile": payload.get("instruction_profile", {}),
         "source_passages": payload.get("source_passages", []),
+        "review_policy": payload.get("review_policy", canonical_policy_payload()),
+        "supported_claim_graph": payload.get("supported_claim_graph", {}),
     }
     if pass_name == "evidence_critic":
-        return {**common, "structured_target": payload.get("structured_target", {})}
+        return {
+            **common,
+            "question_type": payload.get("question_type"),
+            "expected_sections": payload.get("expected_sections", []),
+            "structured_target": payload.get("structured_target", {}),
+        }
     if pass_name == "answer_critic":
         passages = [
             {
@@ -322,6 +455,8 @@ def blind_payload(pass_name: str, payload: dict[str, Any]) -> dict[str, Any]:
             "answer": payload.get("answer"),
             "structured_target": payload.get("structured_target", {}),
             "known_failure_labels": payload.get("known_failure_labels", []),
+            "claim_citation_map": payload.get("claim_citation_validation", {}),
+            "supported_claim_graph": payload.get("supported_claim_graph", {}),
         }
     if pass_name == "citation_critic":
         return {
@@ -330,6 +465,13 @@ def blind_payload(pass_name: str, payload: dict[str, Any]) -> dict[str, Any]:
             "answer": payload.get("answer"),
             "source_passages": payload.get("source_passages", []),
             "citation_mappings": payload.get("citation_mappings", []),
+            "atomic_claims": payload.get("claim_citation_validation", {}).get(
+                "claims", []
+            ),
+            "deterministic_citation_validation": payload.get(
+                "claim_citation_validation", {}
+            ),
+            "supported_claim_graph": payload.get("supported_claim_graph", {}),
         }
     if pass_name == "final_adjudicator":
         return {
@@ -340,6 +482,11 @@ def blind_payload(pass_name: str, payload: dict[str, Any]) -> dict[str, Any]:
             "deterministic_review": payload.get("deterministic_review", {}),
             "critic_results": payload.get("critic_results", []),
             "repair_history": payload.get("repair_history", []),
+            "deterministic_conflict_policy": payload.get(
+                "deterministic_conflict_policy", {}
+            ),
+            "claim_citation_validation": payload.get("claim_citation_validation", {}),
+            "supported_claim_graph": payload.get("supported_claim_graph", {}),
         }
     return {
         **common,
@@ -347,6 +494,8 @@ def blind_payload(pass_name: str, payload: dict[str, Any]) -> dict[str, Any]:
         "citation_mappings": payload.get("citation_mappings", []),
         "structured_target": payload.get("structured_target", {}),
         "required_corrections": payload.get("required_corrections", []),
+        "claim_citation_validation": payload.get("claim_citation_validation", {}),
+        "supported_claim_graph": payload.get("supported_claim_graph", {}),
     }
 
 
@@ -405,6 +554,12 @@ class CodexCLIReviewProvider:
         prompt = (
             "You are one focused stage in a local research-paper dataset curation "
             "pipeline. Do not browse or use facts outside the supplied passages. "
+            "Every corrected_evidence_ids entry and every structured-target "
+            "citation ID must be an evidence_id from the current source_passages. "
+            "In corrected_answer prose, cite those passages only with their "
+            "display labels such as [C1], never with raw evidence IDs. "
+            f"Canonical review policy version {REVIEW_POLICY_VERSION}: "
+            f"{json.dumps(CANONICAL_REVIEW_POLICY, sort_keys=True)} "
             f"Your role is {pass_name}. {_PASS_INSTRUCTIONS[pass_name]} "
             "Return only the requested schema.\n\nINPUT:\n"
             + json.dumps(payload, ensure_ascii=False, sort_keys=True, allow_nan=False)
@@ -421,8 +576,6 @@ class CodexCLIReviewProvider:
                 "--ephemeral",
                 "--sandbox",
                 "read-only",
-                "--ask-for-approval",
-                "never",
                 "--cd",
                 str(self.repository_root),
                 "--output-schema",
@@ -437,6 +590,7 @@ class CodexCLIReviewProvider:
                     check=False,
                     capture_output=True,
                     text=True,
+                    stdin=subprocess.DEVNULL,
                     timeout=self.timeout_seconds,
                 )
             except subprocess.TimeoutExpired as error:

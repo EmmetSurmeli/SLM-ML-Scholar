@@ -361,6 +361,34 @@ class EvidenceSufficiency:
 
 
 @dataclass(frozen=True)
+class GroundedAbstention:
+    """Non-factual abstention state with an inspectable evidence attempt."""
+
+    reason_code: str
+    evidence_attempt_summary: str
+    citations_required: bool
+    supporting_evidence_ids: tuple[str, ...] = ()
+
+    def __post_init__(self) -> None:
+        _nonempty_string(self.reason_code, "reason_code")
+        _nonempty_string(self.evidence_attempt_summary, "evidence_attempt_summary")
+        if not isinstance(self.citations_required, bool):
+            raise TypeError("citations_required must be boolean.")
+        if not isinstance(self.supporting_evidence_ids, tuple) or not all(
+            isinstance(item, str) and item for item in self.supporting_evidence_ids
+        ):
+            raise ValueError("supporting_evidence_ids must contain non-empty strings.")
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "reason_code": self.reason_code,
+            "evidence_attempt_summary": self.evidence_attempt_summary,
+            "citations_required": self.citations_required,
+            "supporting_evidence_ids": list(self.supporting_evidence_ids),
+        }
+
+
+@dataclass(frozen=True)
 class ClaimSupport:
     """Conservative lexical support signals; this is not entailment."""
 

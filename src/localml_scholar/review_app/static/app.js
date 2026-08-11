@@ -299,15 +299,38 @@ function renderAutonomous() {
   const state = app.state.autonomous_curation || {};
   const run = state.latest_run;
   const report = run?.report || {};
+  const reliability = report.reliability || {};
   const statuses = state.status_counts || {};
+  const diagnostics = run?.claim_diagnostics || [];
+  const preflight = run?.preflight_metrics || {};
+  const claimDetails = diagnostics.map((item) => {
+    const graph = item.supported_claim_graph || {};
+    const claims = Object.fromEntries((graph.claims || []).map((claim) => [claim.claim_id, claim]));
+    const evidence = Object.fromEntries((item.evidence || []).map((entry) => [entry.label, entry]));
+    const sentences = (graph.answer_sentences || []).map((sentence) => {
+      const linkedClaims = (sentence.claim_ids || []).map((id) => claims[id]).filter(Boolean);
+      const linkedEvidence = (sentence.citation_labels || []).map((label) => evidence[label]).filter(Boolean);
+      return `<details><summary>${escapeHtml(sentence.text)}</summary><pre>${escapeHtml(JSON.stringify({ claims: linkedClaims, evidence: linkedEvidence }, null, 2))}</pre></details>`;
+    }).join("");
+    return `<details><summary>${escapeHtml(item.question || item.question_id)} · ${escapeHtml(item.question_type)}</summary>${sentences}<pre>${escapeHtml(JSON.stringify({ metrics: item.claim_alignment_metrics, repairs: item.repair_history, claim_disagreements: item.claim_level_disagreements }, null, 2))}</pre></details>`;
+  }).join("");
   $("#autonomous-count").textContent = statuses.codex_curated || 0;
   $("#autonomous-paper-summary").textContent = `${app.selectedPapers.size} papers selected`;
   $("#autonomous-resume").disabled = run?.status !== "suspended";
   $("#autonomous-metrics").innerHTML = `
     <div class="metric-row"><div><strong>${report.questions_generated || 0}</strong><span>questions</span></div><div><strong>${report.examples_accepted || statuses.codex_curated || 0}</strong><span>Codex-curated</span></div><div><strong>${report.examples_rejected || statuses.rejected || 0}</strong><span>rejected</span></div></div>
+    <div class="metric-row"><div><strong>${Math.round((reliability.hard_disagreement_rate || 0) * 100)}%</strong><span>hard disagreement</span></div><div><strong>${Math.round((reliability.soft_disagreement_rate || 0) * 100)}%</strong><span>soft disagreement</span></div><div><strong>${Math.round((reliability.citation_structural_validity || 0) * 100)}%</strong><span>citation structure</span></div></div>
+    <div class="metric-row"><div><strong>${Math.round((reliability.citation_support_rate || 0) * 100)}%</strong><span>citation support</span></div><div><strong>${Math.round((reliability.citation_relevance_rate || 0) * 100)}%</strong><span>citation relevance</span></div><div><strong>${reliability.stale_evidence_id_count || 0}</strong><span>stale evidence IDs</span></div></div>
+    <div class="metric-row"><div><strong>${reliability.claim_count || 0}</strong><span>claims</span></div><div><strong>${Math.round((reliability.claim_citation_completeness || 0) * 100)}%</strong><span>claim citations</span></div><div><strong>${Math.round((reliability.evidence_to_claim_alignment || 0) * 100)}%</strong><span>evidence alignment</span></div></div>
+    <div class="metric-row"><div><strong>${Math.round((reliability.sentence_to_claim_traceability || 0) * 100)}%</strong><span>sentence traceability</span></div><div><strong>${reliability.claim_hard_disagreement_count || 0}</strong><span>claim conflicts</span></div><div><strong>${Math.round((reliability.repair_success_rate || 0) * 100)}%</strong><span>repair success</span></div></div>
+    <div class="metric-row"><div><strong>${preflight.healthy_papers || 0}</strong><span>healthy papers</span></div><div><strong>${preflight.unhealthy_papers || 0}</strong><span>unhealthy papers</span></div><div><strong>${preflight.question_templates_suppressed || 0}</strong><span>templates suppressed</span></div></div>
+    <div class="metric-row"><div><strong>${preflight.deterministic_preflight_rejections || 0}</strong><span>preflight rejections</span></div><div><strong>${preflight.candidates_sent_to_codex || 0}</strong><span>sent to Codex</span></div><div><strong>${preflight.codex_calls_saved || 0}</strong><span>Codex calls saved</span></div></div>
+    <div class="metric-row"><div><strong>${preflight.deterministic_repair_successes || 0}</strong><span>deterministic repairs</span></div><div><strong>${preflight.candidate_construction_failures || 0}</strong><span>candidate failures</span></div><div><strong>${preflight.preflight_cache_hits || 0}</strong><span>cache hits</span></div></div>
+    <details><summary>Reviewer reliability and category metrics</summary><pre>${escapeHtml(JSON.stringify({ disagreement_taxonomy: reliability.disagreement_taxonomy || {}, reviewer_pair_matrix: reliability.reviewer_pair_matrix || {}, metrics_by_question_type: reliability.metrics_by_question_type || {}, repair_success_by_type: reliability.repair_success_by_type || {}, representative_failures: reliability.representative_failures || {} }, null, 2))}</pre></details>
+    <details><summary>Sentence → claim → evidence traces</summary>${claimDetails || "<p>No 1.2.5 claim traces yet.</p>"}</details>
     <p><span class="status-tag ${escapeHtml(run?.status || "proposed")}">${escapeHtml(run?.status || "not started")}</span> · stage ${escapeHtml(run?.stage || "none")} · Codex ${state.codex_available ? "available" : "unavailable"}</p>
     <p class="microcopy">${run ? `Run ${escapeHtml(run.run_id)} · ${run.paper_ids?.length || 0} papers · updated ${escapeHtml(run.updated_at)}` : "Start with selected papers or select all papers in the corpus."}</p>`;
-  $("#autonomous-report").textContent = run ? JSON.stringify({ report, paper_splits: run.paper_splits, dataset_path: run.dataset_path, manifest_path: run.manifest_path, errors: run.errors }, null, 2) : "No run yet.";
+  $("#autonomous-report").textContent = run ? JSON.stringify({ report, preflight_metrics: preflight, ingestion_health: run.ingestion_health, candidate_failures: run.candidate_failures || [], paper_splits: run.paper_splits, dataset_path: run.dataset_path, manifest_path: run.manifest_path, errors: run.errors }, null, 2) : "No run yet.";
 }
 
 function renderState() {
@@ -536,7 +559,7 @@ $("#autonomous-form").addEventListener("submit", async (event) => {
 });
 
 $("#autonomous-refresh").onclick = () => refresh().catch((error) => toast(error.message, true));
-$("#autonomous-process-new").onclick = async () => { try { const run = await api("/api/autonomous/process-new", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ config: { questions_per_paper: 60, maximum_examples_per_paper: 40, acceptance_threshold: 0.97, evidence_threshold: 0.97, maximum_repair_attempts: 2, validation_fraction: 0.15, test_fraction: 0.15, seed: 42, include_multi_turn: true, include_derivations: true, include_cross_paper: false, include_abstentions: true, per_question_type_cap: 12, maximum_disagreement_rate: 0.10 } }) }); await refresh(); toast(`Run ${run.run_id} started for newly uploaded papers.`); } catch (error) { toast(error.message, true); } };
+$("#autonomous-process-new").onclick = async () => { try { const run = await api("/api/autonomous/process-new", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ config: { questions_per_paper: 60, maximum_examples_per_paper: 40, acceptance_threshold: 0.97, evidence_threshold: 0.97, maximum_repair_attempts: 2, validation_fraction: 0.15, test_fraction: 0.15, seed: 42, include_multi_turn: true, include_derivations: false, include_cross_paper: false, include_abstentions: true, per_question_type_cap: 12, maximum_disagreement_rate: 0.10 } }) }); await refresh(); toast(`Run ${run.run_id} started for newly uploaded papers.`); } catch (error) { toast(error.message, true); } };
 $("#autonomous-resume").onclick = async () => { const run = app.state.autonomous_curation?.latest_run; if (!run) return; try { await api(`/api/autonomous/runs/${encodeURIComponent(run.run_id)}/resume`, { method: "POST", headers: { "Content-Type": "application/json" }, body: "{}" }); await refresh(); toast("Run resumed from its saved cursor."); } catch (error) { toast(error.message, true); } };
 
 $("#ask-form").addEventListener("submit", async (event) => { event.preventDefault(); if (!app.selectedPapers.size) { toast("Select at least one paper.", true); return; } try { busy("Selecting evidence and interpreting instructions…"); const sessionId = await ensureSession(); await api("/api/questions", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ question: $("#question").value, document_ids: [...app.selectedPapers], session_id: sessionId }) }); $("#question").value = ""; await refresh(); toast("Grounded answer ready for review."); } catch (error) { toast(error.message, true); } });

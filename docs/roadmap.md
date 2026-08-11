@@ -381,6 +381,23 @@ answer remains the trusted baseline, optional human audit remains available,
 and no model is trained in this milestone. Test the workflow on 10–15 diverse
 papers before expanding to 20–30.
 
+## Milestone 12A.4 — Reviewer agreement and citation reliability
+
+Status: implementation complete in package 1.2.4; controlled real-corpus
+diagnostics determine readiness.
+
+The first 14-paper run stopped safely after ten examples exposed systemic
+reviewer-contract and citation-label failures. Version 1.2.4 adds one canonical
+policy vocabulary, typed role outcomes, atomic claims, canonical citation
+normalization, stable evidence identities, deterministic citation gates,
+hard/soft disagreement, repair diagnostics, stratified controlled runs, and a
+strict full-run readiness policy. It preserves the failed 1.2.3 artifact and
+does not lower the 0.97 threshold.
+
+Milestone 12B remains blocked until a 50-candidate controlled run and a second
+100–150 candidate run pass reliability gates. No full 840-candidate rerun and
+no transformer training may begin merely because code-level tests pass.
+
 ## Milestone 12B — Grounded scholarly explanation training
 
 Status: planned.
@@ -496,3 +513,52 @@ Any claim of outperforming PyTorch must report:
 - latency distribution
 - numerical tolerance
 - whether PyTorch eager and `torch.compile` were tested
+## Milestone 12A.5 — evidence-to-claim alignment
+
+Implemented in package 1.2.5: supported-claim graphs, relevance and sufficiency
+gates, citation-first composition, numerical/entity alignment, failure-specific
+repair, per-claim diagnostics, and gated controlled evaluation. Milestone 12B
+remains blocked until both controlled diagnostic sizes satisfy every readiness
+threshold.
+
+## Milestone 12A.6 — fast deterministic curation preflight
+
+Status: deterministic repairs verified; the first reviewer-backed pilot exposed
+two additional integration defects and is frozen. A replacement pilot is the
+next gate.
+
+Package 1.2.6 freezes the invalid partial 50-candidate run and repairs the
+upstream deterministic path: scholarly section recovery, ingestion health,
+topic-aware eligibility, answerability pools, canonical query normalization,
+essential concepts, stronger sufficiency, structured abstentions, cheap-first
+claim repair, number-word entity handling, candidate failure isolation,
+systemic-error detection, hash-keyed preflight caching, call instrumentation,
+authored fixtures, dashboard diagnostics, and a local pipeline self-test.
+
+The gate order is now:
+
+```text
+authored fixtures -> zero-Codex self-test -> 10-question real-paper pilot
+                  -> fresh 50-question diagnostic only if pilot passes
+```
+
+No 840-candidate run and no training are part of this milestone. Milestone 12B
+remains blocked until measured reviewer-backed diagnostics pass.
+
+Measured local gate: 14 healthy papers, 367 templates suppressed, eight
+authored self-test checks passed with zero Codex calls, 163 real-paper
+candidates rejected before final pilot selection, and 918 passing tests. The
+8-answerable/2-abstention pilot spans 10 papers. After explicit approval it
+processed 2/10 items, made 15 reviewer calls, and exposed a `batch` versus
+`minibatch` completeness mismatch plus a no-progress repair retry. The defects
+are fixed and regression-tested; the run is frozen at `readiness_invalidated`.
+The first replacement confirmed the numeric fix, then stopped after 3/10 when
+causal masking exposed the broader category-marker answerability defect. The
+second replacement removed that prefix failure but stopped after 3/10 because
+sentence-initial technical terms were misclassified as named entities and
+causal-mask evidence coverage stayed at 0.5. Both are frozen. Third replacement
+`curation_790d8f32e5a7499baac7da5b5f03009f` completed: 2 `codex_curated`, 2
+local insufficient-evidence outcomes, 5 rejected, and 1 uncertain across 80
+reviewer calls. Citation structural, support, and relevance validity were 1.0,
+but hard reviewer disagreement was 0.25, above the 0.15 pilot gate. A fresh
+50-item run is therefore ineligible and was not created.

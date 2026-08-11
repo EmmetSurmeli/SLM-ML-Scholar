@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import re
-from collections.abc import Callable, Iterable
+from collections.abc import Callable, Iterable, Iterator
 from typing import Any
 
 from localml_scholar.retrieval import Document
@@ -198,6 +198,16 @@ def sentence_spans(text: str, start: int = 0, end: int | None = None):
                 yield left, right
 
 
+def _document_sentence_spans(document: Document) -> Iterator[tuple[int, int]]:
+    """Yield sentences without allowing a span to cross a section boundary."""
+    for section in document.sections:
+        yield from sentence_spans(
+            document.text,
+            section.start_character,
+            section.end_character,
+        )
+
+
 def make_evidence(
     document: Document,
     category: str,
@@ -255,7 +265,7 @@ def _sentence_matches(
             method,
             confidence,
         )
-        for start, end in sentence_spans(document.text)
+        for start, end in _document_sentence_spans(document)
         if predicate(document.text[start:end])
     )
 
@@ -274,7 +284,7 @@ def extract_assumptions(
         )
     )
     if config.include_inferred_assumptions:
-        for start, end in sentence_spans(document.text):
+        for start, end in _document_sentence_spans(document):
             text = document.text[start:end]
             if re.search(
                 r"\b(?:requires?|necessary)\b", text, re.I
@@ -298,7 +308,7 @@ def extract_assumptions(
 def extract_claims(document: Document) -> tuple[ScholarlyEvidence, ...]:
     """Extract narrow explicit claim patterns while preserving qualifiers."""
     claims: list[ScholarlyEvidence] = []
-    for start, end in sentence_spans(document.text):
+    for start, end in _document_sentence_spans(document):
         text = document.text[start:end]
         for claim_type, pattern in _CLAIM_PATTERNS:
             if pattern.search(text):
@@ -508,7 +518,7 @@ def extract_results(
         if set(section.roles) & {"results", "experiments", "ablation"}
     }
     values: list[ScholarlyEvidence] = []
-    for start, end in sentence_spans(document.text):
+    for start, end in _document_sentence_spans(document):
         section = section_for_range(document, start, end)
         text = document.text[start:end]
         numbers = list(_NUMBER.finditer(text))
@@ -567,7 +577,7 @@ def extract_ablations(
             end,
             "ablation_heading_or_phrase",
         )
-        for start, end in sentence_spans(document.text)
+        for start, end in _document_sentence_spans(document)
         if section_for_range(document, start, end).section_id in ablation_sections
         or pattern.search(document.text[start:end])
     )
@@ -581,7 +591,7 @@ def extract_limitations(
         section.section_id for section in sections if "limitations" in section.roles
     }
     values = []
-    for start, end in sentence_spans(document.text):
+    for start, end in _document_sentence_spans(document):
         text = document.text[start:end]
         section_id = section_for_range(document, start, end).section_id
         if section_id in limitation_sections or _LIMITATION.search(text):

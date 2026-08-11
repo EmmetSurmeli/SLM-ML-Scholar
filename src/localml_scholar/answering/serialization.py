@@ -80,6 +80,10 @@ def load_grounded_answer(
         "1.1.1",
         "1.2.0",
         "1.2.1",
+        "1.2.2",
+        "1.2.3",
+        "1.2.4",
+        "1.2.5",
         __version__,
     }:
         raise ValueError("Grounded answer package version is incompatible.")

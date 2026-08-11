@@ -16,6 +16,7 @@ from localml_scholar.retrieval.documents import (
     sha256_text,
     stable_identifier,
 )
+from localml_scholar.retrieval.section_inference import infer_scholarly_headings
 
 _ATX_HEADING = re.compile(r"^(#{1,6})[ \t]+(.+?)[ \t]*#*[ \t]*$")
 _SUPPORTED_ERRORS = {"strict", "replace"}
@@ -248,34 +249,82 @@ def ingest_pdf_text(
     # Empty extracted pages contain no source characters. Keep their numbers in
     # metadata without creating artificial newline-only searchable sections.
     text = "\n".join(page.text for page in nonempty_pages)
-    specs: list[dict[str, Any]] = []
+    page_spans: list[tuple[int, int, int]] = []
     cursor = 0
     for index, page in enumerate(nonempty_pages):
         end = cursor + len(page.text) + (1 if index < len(nonempty_pages) - 1 else 0)
-        specs.append(
-            {
-                "heading": None,
-                "heading_path": (),
-                "level": None,
-                "start_character": cursor,
-                "end_character": end,
-                "page_start": page.page_number,
-                "page_end": page.page_number,
-            }
-        )
+        page_spans.append((cursor, end, page.page_number))
         cursor = end
+    headings = infer_scholarly_headings(text)
+    specs: list[dict[str, Any]] = []
+    if headings:
+        boundaries = [item.offset for item in headings]
+        if boundaries[0] != 0:
+            boundaries.insert(0, 0)
+        boundaries.append(len(text))
+        by_offset = {item.offset: item for item in headings}
+        hierarchy: list[str] = []
+        levels: list[int] = []
+        for position, start in enumerate(boundaries[:-1]):
+            end = boundaries[position + 1]
+            if start >= end:
+                continue
+            inferred = by_offset.get(start)
+            if inferred is None:
+                heading, level, path = "Front Matter", 1, ("Front Matter",)
+                hierarchy, levels = [heading], [level]
+            else:
+                heading, level = inferred.title, inferred.level
+                while levels and levels[-1] >= level:
+                    levels.pop()
+                    hierarchy.pop()
+                levels.append(level)
+                hierarchy.append(heading)
+                path = tuple(hierarchy)
+            overlapping = [
+                number
+                for page_start, page_end, number in page_spans
+                if page_start < end and page_end > start
+            ]
+            specs.append(
+                {
+                    "heading": heading,
+                    "heading_path": path,
+                    "level": level,
+                    "start_character": start,
+                    "end_character": end,
+                    "page_start": min(overlapping),
+                    "page_end": max(overlapping),
+                }
+            )
+    else:
+        for start, end, page_number in page_spans:
+            specs.append(
+                {
+                    "heading": None,
+                    "heading_path": (),
+                    "level": None,
+                    "start_character": start,
+                    "end_character": end,
+                    "page_start": page_number,
+                    "page_end": page_number,
+                }
+            )
     return _document_shell(
         source=source,
         media_type="application/pdf-derived-text",
         text=text,
         title=title,
         user_metadata=metadata,
-        parser_identifier="external_page_text_v1",
+        parser_identifier="external_page_text_v2",
         section_specs=specs,
         inferred_metadata_extra={
             "page_count": len(materialized),
             "empty_pages": [page.page_number for page in materialized if not page.text],
             "extraction_policy": "externally_supplied_page_text",
+            "heading_inference": "deterministic_scholarly_lines_v1",
+            "heading_count": len(headings),
+            "section_structure_low_confidence": not bool(headings),
         },
     )
 

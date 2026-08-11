@@ -5,6 +5,7 @@ from __future__ import annotations
 import re
 import threading
 import uuid
+from collections import Counter
 from copy import deepcopy
 from dataclasses import replace
 from datetime import UTC, datetime
@@ -15,6 +16,7 @@ from typing import Any
 from localml_scholar._version import __version__
 from localml_scholar.answering import GroundedAnswerPipeline
 from localml_scholar.retrieval import (
+    Document,
     PageText,
     RetrievalIndex,
     SearchFilters,
@@ -186,6 +188,7 @@ class ReviewService:
         self.autonomous_runs_path = (
             self.output_directory / "autonomous_curation_runs.json"
         )
+        self.preflight_cache_path = self.output_directory / "preflight_cache.json"
         self.autonomous_output_directory = self.output_directory / "autonomous_curation"
         self.codex_provider = (
             CodexCLIReviewProvider(root) if codex_provider is None else codex_provider
@@ -321,14 +324,32 @@ class ReviewService:
 
     def paper_summary(self, document_id: str) -> dict[str, Any]:
         """Return compact metadata for one indexed paper."""
-        index, document = self._document(document_id)
-        chunk_count = sum(
-            chunk.document_id == document.document_id for chunk in index.chunks
+        with self._lock:
+            index, document = self._document(document_id)
+            questions = load_json_list(self.questions_path)
+            interactions = load_json_list(self.interactions_path)
+            corrections = load_json_list(self.corrections_path)
+        return self._paper_summary_from_state(
+            document,
+            chunk_count=sum(
+                chunk.document_id == document.document_id for chunk in index.chunks
+            ),
+            questions=questions,
+            interactions=interactions,
+            corrections=corrections,
         )
+
+    @staticmethod
+    def _paper_summary_from_state(
+        document: Document,
+        *,
+        chunk_count: int,
+        questions: list[dict[str, Any]],
+        interactions: list[dict[str, Any]],
+        corrections: list[dict[str, Any]],
+    ) -> dict[str, Any]:
+        """Build a paper summary from one already-loaded index snapshot."""
         page_count = document.metadata.get("inferred", {}).get("page_count")
-        questions = load_json_list(self.questions_path)
-        interactions = load_json_list(self.interactions_path)
-        corrections = load_json_list(self.corrections_path)
         return {
             "document_id": document.document_id,
             "title": document.title or document.source_name,
@@ -340,10 +361,10 @@ class ReviewService:
             "chunk_count": chunk_count,
             "character_count": document.character_length,
             "benchmark_question_count": sum(
-                document_id in item.get("paper_ids", []) for item in questions
+                document.document_id in item.get("paper_ids", []) for item in questions
             ),
             "reviewed_answer_count": sum(
-                document_id
+                document.document_id
                 in item.get(
                     "paper_ids",
                     [item.get("document_id")]
@@ -353,7 +374,8 @@ class ReviewService:
                 for item in interactions
             ),
             "correction_count": sum(
-                document_id in item.get("paper_ids", []) for item in corrections
+                document.document_id in item.get("paper_ids", [])
+                for item in corrections
             ),
         }
 
@@ -363,8 +385,19 @@ class ReviewService:
             index = self._load_index(required=False)
             if index is None:
                 return []
+            questions = load_json_list(self.questions_path)
+            interactions = load_json_list(self.interactions_path)
+            corrections = load_json_list(self.corrections_path)
+            chunk_counts = Counter(chunk.document_id for chunk in index.chunks)
             summaries = [
-                self.paper_summary(document.document_id) for document in index.documents
+                self._paper_summary_from_state(
+                    document,
+                    chunk_count=chunk_counts[document.document_id],
+                    questions=questions,
+                    interactions=interactions,
+                    corrections=corrections,
+                )
+                for document in index.documents
             ]
         return sorted(
             summaries,
@@ -1507,8 +1540,17 @@ class ReviewService:
             analysis = pipeline.analyze_paper(document_id)
             summary = pipeline.summarize_paper(document_id)
             checklist = pipeline.build_reproduction_checklist(document_id)
+            paper = self._paper_summary_from_state(
+                document,
+                chunk_count=sum(
+                    chunk.document_id == document.document_id for chunk in index.chunks
+                ),
+                questions=load_json_list(self.questions_path),
+                interactions=load_json_list(self.interactions_path),
+                corrections=load_json_list(self.corrections_path),
+            )
         return {
-            "paper": self.paper_summary(document_id),
+            "paper": paper,
             "analysis": analysis.to_dict(),
             "summary": summary.to_dict(),
             "checklist": checklist.to_dict(),
@@ -1527,6 +1569,7 @@ class ReviewService:
         audience_level: str | None = None,
         session_id: str | None = None,
         instruction_overrides: dict[str, Any] | None = None,
+        expected_sections: tuple[str, ...] = (),
     ) -> dict[str, Any]:
         """Answer selected local papers with adaptive presentation metadata."""
         cleaned_question = _nonempty_text(question, "question", maximum=4000)
@@ -1542,6 +1585,10 @@ class ReviewService:
             raise ValueError("document_ids must be a non-empty tuple of paper IDs.")
         if document_id is not None and document_ids is not None:
             raise ValueError("Use document_id or document_ids, not both.")
+        if not isinstance(expected_sections, tuple) or not all(
+            isinstance(item, str) and item.strip() for item in expected_sections
+        ):
+            raise ValueError("expected_sections must be a tuple of non-empty strings.")
         with self._lock:
             index = self._load_index()
             session = None if session_id is None else self.get_session(session_id)
@@ -1590,6 +1637,7 @@ class ReviewService:
                 method="extractive",
                 top_k=8,
                 filters=filters,
+                expected_sections=expected_sections,
             )
             answer_state = answer.to_dict()
             evidence_papers = {

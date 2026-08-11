@@ -762,6 +762,31 @@ questions without generating or retaining their corrected answers. Cross-paper
 examples spanning different splits are excluded. `codex_curated` is a distinct
 automated provenance class and is never rewritten to `human_approved`.
 
+## Reviewer reliability gate
+
+Milestone 12A.4 places a deterministic reliability boundary around autonomous
+curation:
+
+```text
+current evidence -> canonical identity + citation normalization
+                 -> atomic claims -> structural/lexical validator
+                 -> role-separated Codex critics under one policy vocabulary
+                 -> hard/soft conflict taxonomy
+                 -> deterministic conflict policy -> final adjudicator
+                 -> repair diagnostics -> controlled-run readiness gate
+```
+
+The deterministic validator rejects malformed structure, wrong sources, stale
+identity, unsupported numbers, and known concept/section mismatches. It does not
+claim entailment; semantic citation review remains separate. Display labels are
+answer-local, while stable evidence identities derive from document/chunk and
+source coordinates. Legacy 1.2.3 records are enriched only in memory.
+
+Only reviewed records enter reviewer safety denominators. Held-out-paper
+questions remain evaluation-only, and unstable question types are retained but
+not materialized into autonomous training data. A full corpus run is downstream
+of two controlled diagnostics, never a prerequisite for them.
+
 ## Future module constraints
 
 The core neural-network path will continue to use Python, NumPy array storage
@@ -770,3 +795,52 @@ automatic differentiation, framework layers, framework losses, framework
 optimizers, pretrained-model APIs, or external tokenizers. PDF parsing,
 plotting, tests, and the application will stay outside that core and may use
 focused third-party libraries when their value is clear.
+## Evidence-first answer planning (1.2.5)
+
+The autonomous answer boundary is now structured:
+
+```text
+retrieved passages
+  → atomic SupportedClaim graph
+  → support, relevance, number, entity, and sufficiency gates
+  → AnswerPlan with claim/citation IDs
+  → deterministic AnswerSentence rendering
+  → unsupported-language and critic validation
+```
+
+Retrieval evidence and the claim graph remain separate artifacts. Replacing
+evidence invalidates the old mapping and forces a new plan. All critics receive
+the same claims, evidence, and plan, reducing conflicts caused by reviewing
+different implied prose claims. Legacy 1.2.3/1.2.4 artifacts are adapted in
+memory and never rewritten.
+
+## Deterministic curation preflight (1.2.6)
+
+The autonomous path now has an explicit inexpensive boundary:
+
+```text
+local paper bytes and extracted text
+  -> inferred scholarly sections + immutable rebuilt index
+  -> hash-cached ingestion health and topic signals
+  -> answerability-separated, topic-eligible questions
+  -> canonical non-stop query concepts
+  -> retrieval + same-passage concept/section + direct-answer sufficiency
+  -> deterministic claim construction and narrowing
+  -> role-separated Codex review for survivors only
+```
+
+The retrieval index and preflight cache remain separate from historical run
+artifacts. Reindexing changes the current ignored index hash but never rewrites
+an old run's cursor, source hashes, split assignments, records, or reviewer
+outputs. Candidate failures are persisted individually; repeated signatures,
+source/index corruption, leakage, serialization failure, and global reviewer
+unavailability remain systemic suspension conditions.
+
+Controlled pilot selection locally evaluates candidate answers before fixing
+the reviewer set. It defers unstable generic result/extraction categories,
+requires numeric values for value-seeking reproduction questions, requires an
+actual complexity characterization for complexity questions, and ensures cited
+claim passages match expected sections through the shared canonical section
+normalizer. Pilot sampling is type-diverse and paper-capped. An exclusive
+process lease prevents concurrent cursor updates, and invalidated historical
+runs return without resuming.

@@ -12,12 +12,29 @@ from datetime import UTC, datetime
 from typing import Any
 
 from localml_scholar._version import __version__
+from localml_scholar.training_data.claim_alignment import (
+    Answerability,
+    build_claim_graph,
+    claim_graph_metrics,
+    repair_claim_graph,
+)
 from localml_scholar.training_data.codex_review import (
     CodexReviewPass,
     CodexReviewProvider,
     execute_review_pass,
 )
 from localml_scholar.training_data.provenance import content_sha256
+from localml_scholar.training_data.reviewer_reliability import (
+    DisagreementSeverity,
+    canonical_policy_payload,
+    claim_level_disagreements,
+    classify_reviewer_disagreements,
+    deterministic_adjudication,
+    reliability_report,
+    repair_diagnostics,
+    stamp_evidence_identities,
+    validate_claim_citations,
+)
 
 AUTONOMOUS_TERMINAL_STATES = {
     "codex_curated",
@@ -27,6 +44,11 @@ AUTONOMOUS_TERMINAL_STATES = {
     "insufficient_evidence",
     "duplicate",
     "split_excluded",
+    "construction_failed",
+    "retrieval_failed",
+    "validation_failed",
+    "reviewer_failed",
+    "repair_failed",
 }
 _CITATION = re.compile(r"\[(C[1-9][0-9]*)\]")
 
@@ -53,6 +75,12 @@ class AutonomousCurationConfig:
     include_abstentions: bool = True
     per_question_type_cap: int = 12
     maximum_disagreement_rate: float = 0.10
+    maximum_hard_disagreement_rate: float = 0.15
+    maximum_citation_structural_failure_rate: float = 0.05
+    maximum_unresolved_support_failure_rate: float = 0.05
+    maximum_malformed_output_rate: float = 0.02
+    maximum_repeated_systemic_errors: int = 3
+    maximum_stage_failure_fraction: float = 0.30
 
     def __post_init__(self) -> None:
         for name, lower, upper in (
@@ -60,6 +88,7 @@ class AutonomousCurationConfig:
             ("maximum_examples_per_paper", 1, 80),
             ("maximum_repair_attempts", 0, 5),
             ("per_question_type_cap", 1, 80),
+            ("maximum_repeated_systemic_errors", 1, 20),
         ):
             value = getattr(self, name)
             if isinstance(value, bool) or not isinstance(value, int):
@@ -74,6 +103,11 @@ class AutonomousCurationConfig:
             "validation_fraction",
             "test_fraction",
             "maximum_disagreement_rate",
+            "maximum_hard_disagreement_rate",
+            "maximum_citation_structural_failure_rate",
+            "maximum_unresolved_support_failure_rate",
+            "maximum_malformed_output_rate",
+            "maximum_stage_failure_fraction",
         ):
             value = getattr(self, name)
             if isinstance(value, bool) or not isinstance(value, (int, float)):
@@ -176,6 +210,9 @@ def _review_payload(
     critic_results: list[dict[str, Any]],
     repair_history: list[dict[str, Any]],
     required_corrections: Sequence[str] = (),
+    claim_citation_validation: dict[str, Any] | None = None,
+    deterministic_conflict_policy: dict[str, Any] | None = None,
+    supported_claim_graph: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     evidence = answer.get("evidence", [])
     return {
@@ -184,6 +221,8 @@ def _review_payload(
             {"paper_ids": interaction.get("paper_ids", candidate.get("paper_ids", []))},
         ),
         "question": candidate.get("question", interaction.get("question")),
+        "question_type": candidate.get("question_type"),
+        "expected_sections": candidate.get("expected_sections", []),
         "conversation_context": interaction.get("conversation_turns", []),
         "instruction_profile": interaction.get("instruction_profile", {}),
         "answer": answer,
@@ -203,6 +242,10 @@ def _review_payload(
         "critic_results": critic_results,
         "repair_history": repair_history,
         "required_corrections": list(required_corrections),
+        "review_policy": canonical_policy_payload(),
+        "claim_citation_validation": claim_citation_validation or {},
+        "deterministic_conflict_policy": deterministic_conflict_policy or {},
+        "supported_claim_graph": supported_claim_graph or {},
     }
 
 
@@ -211,8 +254,6 @@ def _apply_answerer_result(
 ) -> dict[str, Any]:
     updated = {**answer}
     result = pass_result.result
-    if result.corrected_answer:
-        updated["answer_text"] = result.corrected_answer.strip()
     if result.corrected_evidence_ids:
         by_id = {
             str(item.get("evidence_id", item.get("chunk_id", item.get("label")))): item
@@ -231,8 +272,53 @@ def _apply_answerer_result(
             item["label"] = f"C{position}"
             selected.append(item)
         updated["evidence"] = selected
+    # corrected_answer is retained in the immutable review pass for audit, but
+    # never copied into the accepted answer.  The claim graph below is the only
+    # prose source in 1.2.5, preventing a later rewrite from adding new facts.
     updated["abstained"] = result.abstention_required
     return updated
+
+
+def _construct_claim_graph(
+    candidate: dict[str, Any], answer: dict[str, Any]
+) -> dict[str, Any]:
+    """Build and persist the claim-first answer representation."""
+    benchmark = candidate.get("benchmark_metadata", {})
+    required = (
+        benchmark.get("required_concepts", []) if isinstance(benchmark, dict) else []
+    )
+    graph = build_claim_graph(
+        str(candidate.get("question", "")),
+        str(candidate.get("question_type", "unknown")),
+        answer.get("evidence", []),
+        structured_target=(
+            candidate.get("structured_target")
+            if isinstance(candidate.get("structured_target"), dict)
+            else None
+        ),
+        required_concepts=required,
+    )
+    if any(item.support_status.value == "unsupported" for item in graph.claims):
+        graph, repair = repair_claim_graph(
+            graph,
+            evidence=answer.get("evidence", []),
+            question_type=str(candidate.get("question_type", "unknown")),
+            required_concepts=required,
+        )
+        answer["deterministic_claim_repair"] = repair
+    state = graph.to_dict()
+    state["construction_mode"] = (
+        "structured_claims"
+        if isinstance(candidate.get("structured_target"), dict)
+        else "deterministic_evidence_fallback"
+    )
+    answer["answer_text"] = graph.answer_text
+    answer["claim_graph"] = state
+    answer["abstained"] = graph.plan.answerability in {
+        Answerability.INSUFFICIENT,
+        Answerability.EXTERNAL_SOURCE_REQUIRED,
+    }
+    return state
 
 
 def curate_interaction(
@@ -251,10 +337,10 @@ def curate_interaction(
         raise TypeError("interaction and candidate must be dictionaries.")
     if not isinstance(deterministic_review, dict):
         raise TypeError("deterministic_review must be a dictionary.")
-    if not provider.available():
-        raise CurationSuspended("Codex reviewer service is unavailable.")
     answer = dict(interaction.get("answer", {}))
-    answer["evidence"] = [dict(item) for item in answer.get("evidence", [])]
+    answer["evidence"] = stamp_evidence_identities(
+        [dict(item) for item in answer.get("evidence", [])]
+    )
     if not answer.get("evidence"):
         status = (
             "external_source_required"
@@ -269,13 +355,46 @@ def curate_interaction(
             status=status,
             reasons=["No local evidence was available."],
         )
+    if answer.get("abstained"):
+        return _terminal_record(
+            interaction,
+            candidate,
+            answer,
+            deterministic_review,
+            status="insufficient_evidence",
+            reasons=[str(answer.get("abstention_reason", "insufficient_evidence"))],
+        )
+    claim_graph = _construct_claim_graph(candidate, answer)
+    if claim_graph.get("answer_plan", {}).get("answerability") != "sufficient":
+        status = (
+            "external_source_required"
+            if claim_graph.get("answer_plan", {}).get("answerability")
+            == "external_source_required"
+            else "insufficient_evidence"
+        )
+        return _terminal_record(
+            interaction,
+            candidate,
+            answer,
+            deterministic_review,
+            status=status,
+            reasons=["deterministic_claim_preflight_not_answerable"],
+        )
+    if not provider.available():
+        raise CurationSuspended("Codex reviewer service is unavailable.")
     passes: list[CodexReviewPass] = []
     repairs: list[dict[str, Any]] = []
     final_confidence = 0.0
     terminal_status = "uncertain"
     terminal_reasons: list[str] = []
+    final_validation: dict[str, Any] = {}
+    final_disagreements = ()
+    previous_validation: dict[str, Any] | None = None
     maximum_cycles = config.maximum_repair_attempts + 1
     for cycle in range(maximum_cycles):
+        before_evidence_hash = content_sha256(answer.get("evidence", []))
+        before_answer_text = str(answer.get("answer_text", ""))
+        before_citations = tuple(_CITATION.findall(before_answer_text))
         payload = _review_payload(
             interaction=interaction,
             candidate=candidate,
@@ -286,6 +405,7 @@ def curate_interaction(
             required_corrections=(
                 repairs[-1].get("required_corrections", []) if repairs else ()
             ),
+            supported_claim_graph=claim_graph,
         )
         answerer = execute_review_pass(provider, "answerer", payload)
         passes.append(answerer)
@@ -296,8 +416,66 @@ def curate_interaction(
                 **candidate,
                 "structured_target": answerer.result.corrected_target,
             }
+        claim_graph = _construct_claim_graph(candidate, answer)
+        if repairs and "claim_after_metrics" not in repairs[-1]:
+            after_metrics = claim_graph_metrics(claim_graph)
+            before_metrics = repairs[-1].get("claim_before_metrics", {})
+            before_hard = sum(
+                int(before_metrics.get(name, 0))
+                for name in (
+                    "unsupported_claim_count",
+                    "uncited_claim_count",
+                    "unsupported_language_count",
+                )
+            )
+            after_hard = sum(
+                int(after_metrics.get(name, 0))
+                for name in (
+                    "unsupported_claim_count",
+                    "uncited_claim_count",
+                    "unsupported_language_count",
+                )
+            )
+            completeness_improved = (
+                before_metrics.get("answerability") != "sufficient"
+                and after_metrics.get("answerability") == "sufficient"
+            ) or float(after_metrics.get("claim_citation_completeness", 0.0)) > float(
+                before_metrics.get("claim_citation_completeness", 0.0)
+            )
+            if (
+                after_hard == 0
+                and before_hard > 0
+                or after_hard < before_hard
+                or after_hard <= before_hard
+                and completeness_improved
+            ):
+                claim_outcome = "fixed"
+            elif after_hard > before_hard and before_hard == 0:
+                claim_outcome = "introduced_new_failure"
+            elif after_hard > before_hard:
+                claim_outcome = "worsened"
+            else:
+                claim_outcome = "unchanged"
+            repairs[-1]["claim_after_metrics"] = after_metrics
+            repairs[-1]["claim_repair_outcome"] = claim_outcome
         if revalidate is not None:
             deterministic_review = revalidate(answer, candidate)
+        final_validation = validate_claim_citations(
+            str(answer.get("answer_text", "")),
+            answer.get("evidence", []),
+            selected_paper_ids=candidate.get(
+                "paper_ids", interaction.get("paper_ids", [])
+            ),
+            expected_sections=candidate.get("expected_sections", []),
+            required_concepts=candidate.get("benchmark_metadata", {}).get(
+                "required_concepts", []
+            ),
+        )
+        if repairs and previous_validation is not None and "outcome" not in repairs[-1]:
+            repairs[-1].update(
+                repair_diagnostics(previous_validation, final_validation)
+            )
+        answer["answer_text"] = final_validation["normalized_answer"]
         critic_passes = []
         for pass_name in ("evidence_critic", "answer_critic", "citation_critic"):
             critic = execute_review_pass(
@@ -310,6 +488,8 @@ def curate_interaction(
                     deterministic_review=deterministic_review,
                     critic_results=[],
                     repair_history=repairs,
+                    claim_citation_validation=final_validation,
+                    supported_claim_graph=claim_graph,
                 ),
             )
             passes.append(critic)
@@ -326,12 +506,31 @@ def curate_interaction(
                         deterministic_review=deterministic_review,
                         critic_results=[item.to_dict() for item in critic_passes],
                         repair_history=repairs,
+                        claim_citation_validation=final_validation,
+                        supported_claim_graph=claim_graph,
                     ),
                 )
                 passes.append(critic)
                 critic_passes.append(critic)
         critic_states = [item.result.decision for item in critic_passes]
         critic_dicts = [item.to_dict() for item in critic_passes]
+        preliminary_passes = [*passes]
+        final_disagreements = classify_reviewer_disagreements(
+            [item.to_dict() for item in preliminary_passes],
+            after_repair=bool(repairs),
+            validation=final_validation,
+        )
+        conflict_policy = deterministic_adjudication(
+            citation_validation=final_validation,
+            unsupported_claims=tuple(
+                claim
+                for item in critic_passes
+                for claim in item.result.unsupported_claims
+            ),
+            ambiguous_question="ambiguous_benchmark"
+            in interaction.get("diagnostics", {}).get("failure_categories", []),
+            disagreements=final_disagreements,
+        )
         adjudicator = execute_review_pass(
             provider,
             "final_adjudicator",
@@ -342,6 +541,9 @@ def curate_interaction(
                 deterministic_review=deterministic_review,
                 critic_results=critic_dicts,
                 repair_history=repairs,
+                claim_citation_validation=final_validation,
+                deterministic_conflict_policy=conflict_policy,
+                supported_claim_graph=claim_graph,
             ),
         )
         passes.append(adjudicator)
@@ -374,6 +576,14 @@ def curate_interaction(
             and not adjudicator.result.unsupported_claims
             and not adjudicator.result.uncertainty_reasons
             and _all_citations_resolve(answer)
+            and final_validation["structural_valid"]
+            and final_validation["support_valid"]
+            and final_validation["relevance_valid"]
+            and claim_graph.get("answer_plan", {}).get("answerability") == "sufficient"
+            and not claim_graph.get("unsupported_language")
+            and claim_graph_metrics(claim_graph)["claim_citation_completeness"] == 1.0
+            and claim_graph_metrics(claim_graph)["sentence_to_claim_traceability"]
+            == 1.0
             and deterministic_pass
             and _derivation_target_is_explicit(candidate)
         )
@@ -400,20 +610,96 @@ def curate_interaction(
                     cycle + 1,
                 )
                 if replacement:
-                    answer["evidence"] = [dict(item) for item in replacement]
-            repairs.append(
-                {
-                    "attempt": cycle + 1,
-                    "before_answer_hash": before_hash,
-                    "after_answer_hash": content_sha256(answer),
-                    "required_corrections": list(
-                        adjudicator.result.required_corrections
-                    ),
-                    "critic_decisions": critic_states,
-                    "adjudicator_decision": adjudicator.result.decision,
-                    "revalidated": revalidate is not None,
-                }
+                    answer["evidence"] = stamp_evidence_identities(
+                        [dict(item) for item in replacement]
+                    )
+                    # The previous answerer's target may cite evidence that was
+                    # just replaced. Force the next answerer to rebuild it from
+                    # the current passages instead of carrying stale IDs forward.
+                    candidate = {
+                        key: value
+                        for key, value in candidate.items()
+                        if key != "structured_target"
+                    }
+                    claim_graph = _construct_claim_graph(candidate, answer)
+            repair_entry = {
+                "attempt": cycle + 1,
+                "before_answer_hash": before_hash,
+                "after_answer_hash": content_sha256(answer),
+                "required_corrections": list(adjudicator.result.required_corrections),
+                "critic_decisions": critic_states,
+                "adjudicator_decision": adjudicator.result.decision,
+                "revalidated": revalidate is not None,
+                "changed_evidence": before_evidence_hash
+                != content_sha256(answer.get("evidence", [])),
+                "changed_answer": before_answer_text
+                != str(answer.get("answer_text", "")),
+                "changed_citations": before_citations
+                != tuple(_CITATION.findall(str(answer.get("answer_text", "")))),
+                "changed_structured_target": answerer.result.corrected_target
+                is not None,
+                "changed_question_interpretation": False,
+                "repair_types": list(
+                    dict.fromkeys(
+                        [
+                            *(
+                                ["evidence_repair"]
+                                if before_evidence_hash
+                                != content_sha256(answer.get("evidence", []))
+                                else []
+                            ),
+                            *(
+                                ["claim_repair"]
+                                if claim_graph_metrics(claim_graph)[
+                                    "unsupported_claim_count"
+                                ]
+                                else []
+                            ),
+                            *(
+                                ["citation_repair"]
+                                if claim_graph_metrics(claim_graph)[
+                                    "uncited_claim_count"
+                                ]
+                                else []
+                            ),
+                            *(
+                                ["completeness_repair"]
+                                if claim_graph.get("answer_plan", {}).get(
+                                    "answerability"
+                                )
+                                != "sufficient"
+                                else []
+                            ),
+                            "recomposition",
+                        ]
+                    )
+                ),
+                "claim_before_metrics": claim_graph_metrics(claim_graph),
+            }
+            current_metrics = claim_graph_metrics(claim_graph)
+            previous_repair = repairs[-1] if repairs else None
+            no_effective_change = (
+                not repair_entry["changed_evidence"]
+                and not repair_entry["changed_answer"]
+                and not repair_entry["changed_citations"]
+                and previous_repair is not None
+                and current_metrics
+                == previous_repair.get(
+                    "claim_after_metrics",
+                    previous_repair.get("claim_before_metrics", {}),
+                )
+                and repair_entry["required_corrections"]
+                == previous_repair.get("required_corrections", [])
             )
+            repairs.append(repair_entry)
+            if no_effective_change:
+                repair_entry["claim_after_metrics"] = current_metrics
+                repair_entry["claim_repair_outcome"] = "unchanged"
+                repair_entry["outcome"] = "no_progress"
+                terminal_status = "rejected"
+                terminal_reasons = ["deterministic_repair_no_progress"]
+                break
+            previous_validation = final_validation
             continue
         terminal_status = (
             "rejected"
@@ -430,6 +716,16 @@ def curate_interaction(
                     *(
                         ("citation_validation_failed",)
                         if not _all_citations_resolve(answer)
+                        else ()
+                    ),
+                    *(
+                        ("citation_structural_validation_failed",)
+                        if not final_validation.get("structural_valid", False)
+                        else ()
+                    ),
+                    *(
+                        ("citation_support_validation_failed",)
+                        if not final_validation.get("support_valid", False)
                         else ()
                     ),
                     *(
@@ -454,9 +750,18 @@ def curate_interaction(
         status=terminal_status,
         reasons=terminal_reasons,
     )
+    final_disagreements = classify_reviewer_disagreements(
+        [item.to_dict() for item in passes],
+        after_repair=bool(repairs),
+        validation=final_validation,
+    )
     record.update(
         {
             "codex_review_passes": [item.to_dict() for item in passes],
+            "codex_call_count": len(passes),
+            "codex_calls_by_role": dict(
+                sorted(Counter(item.pass_name for item in passes).items())
+            ),
             "repair_history": repairs,
             "repair_attempts": len(repairs),
             "final_adjudicator_confidence": final_confidence,
@@ -480,6 +785,30 @@ def curate_interaction(
                 > 1
                 for _ in (0,)
             ),
+            "review_policy_version": canonical_policy_payload()["version"],
+            "claim_citation_validation": final_validation,
+            "supported_claim_graph": claim_graph,
+            "claim_alignment_metrics": claim_graph_metrics(claim_graph),
+            "citation_structural_valid": bool(final_validation.get("structural_valid")),
+            "citation_support_valid": bool(final_validation.get("support_valid")),
+            "citation_relevance_valid": bool(final_validation.get("relevance_valid")),
+            "stale_evidence_ids": final_validation.get("stale_evidence_ids", []),
+            "source_hash_mismatches": final_validation.get(
+                "source_hash_mismatches", []
+            ),
+            "reviewer_disagreements": [item.to_dict() for item in final_disagreements],
+            "claim_level_disagreements": list(
+                claim_level_disagreements([item.to_dict() for item in passes])
+            ),
+            "hard_reviewer_disagreement": any(
+                item.severity == DisagreementSeverity.HARD
+                for item in final_disagreements
+            ),
+            "soft_reviewer_disagreement": any(
+                item.severity == DisagreementSeverity.SOFT
+                for item in final_disagreements
+            ),
+            "reviewer_output_malformed": False,
         }
     )
     record["record_hash"] = content_sha256(
@@ -514,6 +843,7 @@ def _terminal_record(
         "paper_ids": paper_ids,
         "question": candidate.get("question", interaction.get("question")),
         "question_type": candidate.get("question_type", "unknown"),
+        "expected_answerability": candidate.get("expected_answerability", "answerable"),
         "conversation_context": interaction.get("conversation_turns", []),
         "instruction_profile": interaction.get("instruction_profile", {}),
         "answer": answer,
@@ -543,6 +873,12 @@ def _terminal_record(
         ],
         "split": None,
         "duplicate_cluster": None,
+        "codex_review_passes": [],
+        "codex_call_count": 0,
+        "codex_calls_by_role": {},
+        "rejected_before_codex": status
+        in {"insufficient_evidence", "external_source_required"},
+        "deterministic_repair_used": bool(answer.get("deterministic_claim_repair")),
     }
 
 
@@ -690,4 +1026,5 @@ def autonomous_quality_report(records: list[dict[str, Any]]) -> dict[str, Any]:
         "strongest_accepted_example": strongest,
         "lowest_confidence_accepted_example": weakest,
         "status_counts": dict(sorted(statuses.items())),
+        "reliability": reliability_report(records),
     }

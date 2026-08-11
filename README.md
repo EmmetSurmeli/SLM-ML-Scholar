@@ -1,5 +1,10 @@
 # LocalML Scholar
 
+> **Current package: 1.2.6.** Milestone 12A.6 repairs the deterministic paper
+> pipeline before any further large Codex review run. Full autonomous curation
+> and transformer training remain blocked until the new local preflight and
+> reviewer-backed pilot gates pass.
+
 LocalML Scholar is a portfolio project for building a fully local small
 language model and research-paper assistant from first principles. The eventual
 goal is to help students inspect difficult machine-learning papers, ask
@@ -21,9 +26,116 @@ framework or automatic-differentiation system. This is an educational and
 engineering constraint, not a claim that a from-scratch model is automatically
 faster or more capable.
 
-## Current status: Milestone 12A.3
+## Current status: Milestone 12A.6
 
-The package version is `1.2.3`.
+The package version is `1.2.6`.
+
+The previous 50-candidate diagnostic was frozen at its saved cursor as
+`invalid_for_readiness_due_to_upstream_pipeline_defects`. Its records, hashes,
+splits, errors, cursor, and reviewer outputs are preserved. It will not be
+resumed or counted toward readiness.
+
+Milestone 12A.6 adds deterministic gates before reviewer calls:
+
+- scholarly heading inference and index resectioning instead of repeated
+  `Untitled section` metadata;
+- per-paper ingestion health that blocks severely malformed extraction;
+- topic-aware templates and separate answerable/abstention pools;
+- one stopword-aware query policy and explicit essential concepts;
+- stronger same-passage evidence, section/topic, and direct-answer checks;
+- type-diverse, paper-capped pilot selection plus a cross-process resume lock;
+- structured non-factual abstentions;
+- cheap deterministic claim repair before optional Codex repair;
+- number-word entity regressions;
+- candidate-level failure records plus repeated-error systemic stops;
+- source-hash preflight caching and Codex usage instrumentation;
+- a zero-Codex local pipeline self-test and a gated 10-question pilot command.
+
+The 14 supplied papers are local inputs, not bundled project data. After
+deterministic resectioning, all 14 currently pass the configurable ingestion
+health gate; this is a structural result, not evidence that all extracted
+headings or answers are semantically correct. No 840-candidate curation run and
+no training run is authorized by this milestone.
+
+Run the cheap gates first:
+
+```bash
+python3 -m localml_scholar.training_data.cli pipeline-self-test
+python3 -m localml_scholar.training_data.cli ingestion-health
+python3 -m localml_scholar.training_data.cli question-eligibility-report
+python3 -m localml_scholar.training_data.cli codex-usage-report
+```
+
+Only after the local suite passes, start the bounded pilot:
+
+```bash
+python3 -m localml_scholar.training_data.cli pilot-curation --count 10 --seed 42
+```
+
+The exact local verification completed for 1.2.6 was:
+
+- 14/14 papers structurally healthy, 0 unhealthy, and average titled-section
+  fraction 1.0;
+- 367 unsupported question templates suppressed before candidate use;
+- all eight authored pipeline self-test checks passed with zero Codex calls;
+- the final fixed pilot contains 8 answerable and 2 deliberate-abstention
+  questions across 10 distinct papers;
+- 163 additional pilot candidates were rejected by local retrieval/direct-answer
+  preflight before reviewer selection (approximately 652 four-role calls
+  avoided);
+- Ruff lint and format checks passed, JavaScript syntax passed, and 918 pytest
+  tests passed in 9.87 seconds.
+
+The approved pilot `curation_fe778b0d917f4168b6fecb43bff4f5a4` was stopped
+after 2/10 terminal items. Its deliberate abstention used zero reviewer calls;
+the first answerable item then used 15 calls and was rejected even though its
+numeric claim and citation were supported. The verified causes were an exact
+`batch` versus `minibatch` vocabulary mismatch and a repair loop that retried
+an unchanged correction. Both defects now have regressions. The failed pilot
+is preserved at its exact cursor with `stage="readiness_invalidated"`; it
+cannot resume or count toward readiness. A replacement pilot requires a new,
+run-specific approval.
+
+The first replacement, `curation_78c29180704946dc9cc773a0568a8734`, confirmed
+the batch-size fix in one five-call cycle, then exposed a broader version of
+the planner defect on causal masking: generic question-category vocabulary was
+incorrectly used as an answerability requirement. It is frozen after 3/10
+records with 20 persisted calls. Category markers now classify relevance only;
+a direct, supported claim no longer needs to repeat words such as `model` or
+`layer`.
+
+The second replacement, `curation_2ffb967acc1d455ca4732c7340763ac8`, confirmed
+that the partial-answer defect was removed but exposed two further local
+validators: sentence-initial technical words were misidentified as named
+entities, and causal masking evidence received only 0.5 query coverage despite
+explicit subsequent-position/autoregressive language. It is frozen after 3/10
+records and 20 persisted calls. Both defects now have exact regressions. Third
+replacement `curation_790d8f32e5a7499baac7da5b5f03009f` completed all 10
+items after explicit approval. Two answers became `codex_curated`, two
+deliberate abstentions terminated locally, five answers were rejected, and one
+remained uncertain. The run made 80 reviewer calls. Its two accepted examples
+were exported without being mislabeled human-approved. The pilot is not ready:
+hard reviewer disagreement was 0.25 against a maximum of 0.15. No fresh
+50-question diagnostic was started.
+
+Codex review is now an expensive final quality layer, not the mechanism used to
+discover basic ingestion, question-generation, retrieval, or deterministic
+grounding defects.
+
+Milestone 12A.4 hardens the automated reviewer after the first real 14-paper
+run stopped safely. It adds a canonical reviewer policy, typed evidence/claim/
+citation outcomes, atomic claim-to-citation validation, one citation
+normalization path, stable evidence identities, hard versus soft disagreement,
+repair outcome diagnostics, type-stratified controlled sampling, conservative
+reliability stops, readiness gates, CLI reports, and dashboard diagnostics.
+
+The failed 1.2.3 run remains immutable and is diagnosed in memory. Its measured
+70% hard disagreement and 30% retrospective claim-level citation validity mean
+the pipeline is **not ready** for another full 840-candidate run. No transformer
+was trained, no threshold was lowered, and no additional papers are needed for
+this reliability milestone. Milestone 12B remains blocked until a 50-candidate
+controlled run—and then a second 100–150 candidate run—passes the documented
+readiness policy.
 
 Milestone 12A.3 adds a separate, fully automated corpus-curation path without
 misrepresenting automation as human gold:
@@ -808,6 +920,32 @@ contains six indexed papers and no autonomous run, so its measured autonomous
 counts remain zero accepted, zero rejected, and zero uncertain. No real paper
 payload was sent to Codex during verification and no model was trained.
 
+Milestone 12A.4 was verified on 2026-08-09 with:
+
+```bash
+python3 -m ruff check .
+python3 -m ruff format --check .
+node --check src/localml_scholar/review_app/static/app.js
+git diff --check
+python3 -m pytest -q
+PYTHONPATH=src python3 -m localml_scholar.training_data.cli \
+  --repository . diagnose-reviewers \
+  --run curation_5d2d2687e0e74c61918e44894297303c
+PYTHONPATH=src python3 -m localml_scholar.training_data.cli \
+  --repository . diagnostic-curation --count 50 --seed 42
+PYTHONPATH=src python3 -m localml_scholar.training_data.cli \
+  --repository . full-run-readiness
+```
+
+The complete suite reported `845 passed`. The controlled run selected 50 but
+stopped safely after 11 terminal / 10 reviewed candidates: 0 accepted, 9
+rejected, 1 uncertain, and 1 insufficient-evidence. Evidence validation was
+90.9%; citation structure, support, and relevance were each 20%; hard and
+overall disagreement were each 60%; repair success was 22.2%; malformed output,
+stale IDs, source mismatches, and leakage were all zero. The second diagnostic
+and full 840-candidate run were not started. These are pipeline reliability
+results, not model-capability results; Milestone 12B remains blocked.
+
 The 55-parameter deterministic attention inspection reported exact tensor
 shapes, scaled scores, the causal mask, probabilities, synthetic loss, and
 input/Q/K/V gradient norms. Its synthetic loss was `1.3372998086757004`, and
@@ -1586,6 +1724,11 @@ Mathematical details are in:
 - Section roles, definitions, experimental fields, limitations, and reference
   links use conservative deterministic rules. Ambiguous or absent values
   remain explicit; extraction can still have false positives and negatives.
+- Recovered PDF headings are deterministic line heuristics, not visual layout
+  understanding. Small-cap extraction, tables, appendices, and unusually
+  formatted headings can still create false or missed section boundaries.
+- Topic signals and essential-concept coverage are lexical preflight gates, not
+  semantic proof that a retained question is answerable.
 - Markdown/delimited tables are supported only when their text layout is
   regular. Figures, charts, merged cells, and visual PDF tables are not
   interpreted.
@@ -1602,12 +1745,12 @@ Mathematical details are in:
 
 ## Roadmap
 
-The next recommended milestone is:
+The next recommended action is:
 
-> Milestone 12B: grounded instruction tuning of the custom local transformer
-> using Codex-curated and/or human-verified grounded examples, evaluated on
-> completely held-out papers with deterministic extractive answering retained
-> as the trusted baseline.
+> Prepare, approve, and inspect a replacement 10-question Milestone 12A.6
+> pilot using the repaired pipeline. Run a fresh 50-question diagnostic only
+> if that pilot passes every deterministic, citation, disagreement, leakage,
+> and failure-isolation gate. Milestone 12B remains blocked.
 
 See [the full roadmap](docs/roadmap.md) and
 [the architecture](docs/architecture.md).
@@ -1621,3 +1764,52 @@ compilation settings, latency distribution, and numerical tolerance. Claims
 about paper-grounded answers require exact source-page evidence. Until those
 measurements exist, the project documentation states only what the code is
 designed to do and what verified tests demonstrate.
+## Milestone 12A.5: citation-first claims
+
+The autonomous review path now creates a `SupportedClaim` graph, checks claim
+relevance, evidence sufficiency, numbers, entities, inference provenance, and
+multi-passage support, then builds an inspectable `AnswerPlan`. The final answer
+is rendered only from approved claim IDs. Codex-generated free-form corrections
+are audit artifacts, not accepted answer text.
+
+Useful diagnostics:
+
+```bash
+python3 -m localml_scholar.training_data.cli claim-audit --run RUN_ID
+python3 -m localml_scholar.training_data.cli repair-report --run RUN_ID
+python3 -m localml_scholar.training_data.cli claim-trace --run RUN_ID --candidate QUESTION_ID
+python3 -m localml_scholar.training_data.cli full-run-readiness
+```
+
+The implementation does not lower the 0.97 acceptance/evidence thresholds, does
+not train the transformer, and does not start full-corpus curation automatically.
+Measured 1.2.5 diagnostic results are reported only after the required controlled
+run completes.
+
+Verified locally on 2026-08-09:
+
+```bash
+python3 -m pytest -q tests/test_claim_alignment.py
+python3 -m pytest -q
+python3 -m ruff check .
+python3 -m ruff format --check .
+node --check src/localml_scholar/review_app/static/app.js
+git diff --check
+```
+
+The authored claim suite and the last authorized complete suite passed; Ruff,
+formatting, JavaScript syntax, and whitespace checks pass. Paper-excerpt
+transmission was explicitly approved on 2026-08-10. Two partial runs were
+invalidated after exposing a
+paper-major sampling defect. The corrected run covers all 12 eligible papers but
+is suspended at 1/50 because the configured Codex service reached its usage
+limit. It can resume from the same cursor after service access returns. No
+incomplete or invalid run is eligible for readiness, the second diagnostic, full
+curation, or Milestone 12B.
+
+After the diagnostic-driven fixes, pytest collects 873 tests. The 79 focused
+claim/curation/reliability tests pass, and the sandbox-safe suite reports 869
+passing tests. The final four localhost-server tests could not be reauthorized
+after the account usage limit was reached; the preceding socket-inclusive suite
+reported 871 passing tests before the two new readiness/sampling regressions were
+added. No failing assertion is currently known.

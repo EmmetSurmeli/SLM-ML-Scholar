@@ -41,6 +41,7 @@ from localml_scholar.answering.models import (
     ClaimSupport,
     EvidenceItem,
     EvidenceSufficiency,
+    GroundedAbstention,
     GroundedAnswer,
     GroundedClaim,
 )
@@ -82,6 +83,7 @@ __all__ = [
     "ExtractiveResult",
     "format_inline_citation",
     "GroundedAnswer",
+    "GroundedAbstention",
     "GroundedAnswerPipeline",
     "GroundedClaim",
     "GroundedContext",

@@ -17,6 +17,7 @@ from localml_scholar.answering.extractive import (
 from localml_scholar.answering.generative import GroundedGenerativeAnswerer
 from localml_scholar.answering.models import (
     CitationBinding,
+    GroundedAbstention,
     GroundedAnswer,
 )
 from localml_scholar.answering.validation import (
@@ -136,6 +137,23 @@ class GroundedAnswerPipeline:
         )
         if claims:
             raise RuntimeError("The deterministic abstention must not create claims.")
+        resolved_metadata = metadata or self._metadata(selection, evidence)
+        reason_code = (
+            sufficiency.reasons[-1] if sufficiency.reasons else "insufficient_evidence"
+        )
+        resolved_metadata = {
+            **resolved_metadata,
+            "grounded_abstention": GroundedAbstention(
+                reason_code=reason_code,
+                evidence_attempt_summary=(
+                    f"Retrieved {len(selection.retrieval_results)} passages; "
+                    f"selected {len(evidence)} and matched "
+                    f"{len(sufficiency.matched_query_terms)} essential terms."
+                ),
+                citations_required=False,
+                supporting_evidence_ids=tuple(item.evidence_id for item in evidence),
+            ).to_dict(),
+        }
         return GroundedAnswer(
             question=question,
             method=method,
@@ -151,7 +169,7 @@ class GroundedAnswerPipeline:
             validation=validation,
             fallback_used=False,
             fallback_reason=None,
-            metadata=metadata or self._metadata(selection, evidence),
+            metadata=resolved_metadata,
         )
 
     def _extractive(
@@ -207,9 +225,30 @@ class GroundedAnswerPipeline:
             config=self.acceptance_config,
         )
         if not validation.accepted:
-            raise RuntimeError(
-                "The deterministic extractive baseline failed its own grounding "
-                f"invariants: {validation.rejection_reasons}."
+            failed = replace(
+                sufficiency,
+                sufficient=False,
+                reasons=tuple(
+                    dict.fromkeys(
+                        (*sufficiency.reasons, "extractive_grounding_validation_failed")
+                    )
+                ),
+            )
+            failed_metadata = {
+                **(metadata or self._metadata(selection, evidence)),
+                "answer_construction_failure": {
+                    "stage": "extractive_validation",
+                    "rejection_reasons": list(validation.rejection_reasons),
+                    "recoverable": True,
+                },
+            }
+            return self._abstention(
+                question,
+                method,
+                evidence,
+                failed,
+                selection,
+                metadata=failed_metadata,
             )
         return GroundedAnswer(
             question=question,
@@ -236,10 +275,15 @@ class GroundedAnswerPipeline:
         method: str = "extractive",
         top_k: int | None = None,
         filters: SearchFilters | None = None,
+        expected_sections: tuple[str, ...] = (),
     ) -> GroundedAnswer:
         """Return a fully structured answer or deterministic abstention."""
         if not isinstance(question, str) or not question.strip():
             raise ValueError("question must contain non-whitespace text.")
+        if not isinstance(expected_sections, tuple) or not all(
+            isinstance(item, str) and item.strip() for item in expected_sections
+        ):
+            raise ValueError("expected_sections must be a tuple of non-empty strings.")
         if method not in {
             "top_passage",
             "extractive",
@@ -300,6 +344,7 @@ class GroundedAnswerPipeline:
             question,
             evidence,
             config=evidence_config,
+            expected_sections=expected_sections,
         )
         metadata = self._metadata(
             selection,

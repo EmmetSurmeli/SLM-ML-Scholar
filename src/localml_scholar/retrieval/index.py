@@ -41,6 +41,7 @@ from localml_scholar.retrieval.semantic import (
 from localml_scholar.retrieval.text import (
     LexicalTokenizerConfig,
     lexical_terms,
+    normalize_query_terms,
     tokenize_lexically,
 )
 from localml_scholar.retrieval.tfidf import (
@@ -160,7 +161,7 @@ class SearchQuery:
     ) -> SearchQuery:
         return cls(
             raw_text=text,
-            normalized_terms=tokenize_lexically(text, config),
+            normalized_terms=normalize_query_terms(text, config),
             top_k=top_k,
             filters=filters or SearchFilters(),
         )
@@ -580,6 +581,10 @@ class RetrievalIndex:
             "1.1.1",
             "1.2.0",
             "1.2.1",
+            "1.2.2",
+            "1.2.3",
+            "1.2.4",
+            "1.2.5",
             __version__,
         }:
             raise ValueError("Retrieval index package version is incompatible.")

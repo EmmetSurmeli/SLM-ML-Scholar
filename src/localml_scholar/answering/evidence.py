@@ -17,49 +17,37 @@ from localml_scholar.retrieval import (
     SearchFilters,
     SearchResult,
     lexical_terms,
+    normalize_query_terms,
+    section_topics_compatible,
     tokenize_lexically,
 )
+from localml_scholar.retrieval.query import question_concepts
 from localml_scholar.tokenizer import Tokenizer
 
-_STOP_TERMS = frozenset(
-    {
-        "a",
-        "an",
-        "and",
-        "are",
-        "as",
-        "at",
-        "be",
-        "by",
-        "do",
-        "does",
-        "for",
-        "from",
-        "how",
-        "in",
-        "is",
-        "it",
-        "of",
-        "on",
-        "or",
-        "the",
-        "this",
-        "to",
-        "what",
-        "when",
-        "where",
-        "which",
-        "why",
-        "with",
-    }
-)
+_QUERY_TERM_EQUIVALENTS: dict[str, frozenset[str]] = {
+    "batch": frozenset({"batch", "minibatch"}),
+    "mask": frozenset({"mask", "masking", "masked"}),
+    "masked": frozenset({"mask", "masking", "masked"}),
+    "masking": frozenset({"mask", "masking", "masked"}),
+    "minibatch": frozenset({"batch", "minibatch"}),
+}
+
+
+def _query_term_is_observed(
+    term: str, observed: set[str], query_terms: tuple[str, ...]
+) -> bool:
+    """Match a small, explicit set of retrieval-equivalent technical terms."""
+    equivalents = _QUERY_TERM_EQUIVALENTS.get(term, frozenset({term}))
+    if term == "causal" and {"mask", "masked", "masking"} & set(query_terms):
+        equivalents |= frozenset(
+            {"autoregressive", "regressive", "subsequent", "future"}
+        )
+    return bool(equivalents & observed)
 
 
 def meaningful_query_terms(text: str) -> tuple[str, ...]:
     """Return unique non-stop lexical query terms in source order."""
-    terms = tokenize_lexically(text)
-    meaningful = tuple(dict.fromkeys(term for term in terms if term not in _STOP_TERMS))
-    return meaningful or tuple(dict.fromkeys(terms))
+    return normalize_query_terms(text)
 
 
 @dataclass(frozen=True)
@@ -319,7 +307,8 @@ def select_evidence(
         filters=filters,
         **search_options,
     )
-    content_query_terms = set(meaningful_query_terms(question))
+    concepts = question_concepts(question)
+    content_query_terms = set(concepts.essential_terms)
     eligible = [
         result
         for result in results
@@ -397,6 +386,7 @@ def assess_evidence_sufficiency(
     evidence: tuple[EvidenceItem, ...],
     *,
     config: EvidenceSelectionConfig | None = None,
+    expected_sections: tuple[str, ...] = (),
 ) -> EvidenceSufficiency:
     """Apply explicit lexical thresholds; this does not prove factual support."""
     if not isinstance(question, str) or not question.strip():
@@ -405,30 +395,53 @@ def assess_evidence_sufficiency(
         isinstance(item, EvidenceItem) for item in evidence
     ):
         raise TypeError("evidence must be a tuple of EvidenceItem objects.")
+    if not isinstance(expected_sections, tuple) or not all(
+        isinstance(item, str) and item.strip() for item in expected_sections
+    ):
+        raise ValueError("expected_sections must be a tuple of non-empty strings.")
     resolved = config or EvidenceSelectionConfig()
-    query_terms = meaningful_query_terms(question)
+    concepts = question_concepts(question)
+    query_terms = concepts.essential_terms
+    observed_terms_by_item = tuple(
+        set(item.matched_terms)
+        | set(item.semantic_query_terms)
+        | set(tokenize_lexically(item.selected_text))
+        for item in evidence
+    )
     matched = tuple(
         term
         for term in query_terms
         if any(
-            term in set(item.matched_terms) | set(item.semantic_query_terms)
-            for item in evidence
+            _query_term_is_observed(term, observed, query_terms)
+            for observed in observed_terms_by_item
         )
     )
     unmatched = tuple(term for term in query_terms if term not in set(matched))
     coverage = 0.0 if not query_terms else len(matched) / len(query_terms)
     top_score = max((item.retrieval_score for item in evidence), default=0.0)
     source_count = len({item.document_id for item in evidence})
-    content_present = any(
-        tokenize_lexically(
+
+    def substantive_content(item: EvidenceItem) -> bool:
+        text_terms = tokenize_lexically(
             "\n".join(
                 line
                 for line in item.selected_text.splitlines()
                 if not re.match(r"^\s*#{1,6}\s+", line)
             )
         )
-        for item in evidence
-    )
+        heading_terms = {
+            term
+            for heading in item.heading_path
+            for term in tokenize_lexically(heading)
+        }
+        content_terms = [
+            term
+            for term in text_terms
+            if term not in heading_terms and not re.fullmatch(r"\d+(?:\.\d+)?", term)
+        ]
+        return len(content_terms) >= 4
+
+    content_present = any(substantive_content(item) for item in evidence)
     failures: list[str] = []
     if len(evidence) < resolved.minimum_evidence_count:
         failures.append("too_few_evidence_items")
@@ -438,6 +451,48 @@ def assess_evidence_sufficiency(
         failures.append("too_few_unique_query_terms")
     if coverage < resolved.minimum_query_term_coverage:
         failures.append("query_term_coverage_below_threshold")
+    heading_terms = {
+        term
+        for item in evidence
+        for heading in item.heading_path
+        for term in normalize_query_terms(heading)
+    }
+    observed_sections = tuple(
+        dict.fromkeys(heading for item in evidence for heading in item.heading_path)
+    )
+    expected_section_match = bool(expected_sections) and section_topics_compatible(
+        expected_sections, observed_sections
+    )
+    aligned_direct_signal = any(
+        substantive_content(item)
+        and bool(
+            {
+                term
+                for term in query_terms
+                if _query_term_is_observed(
+                    term,
+                    set(item.matched_terms)
+                    | set(item.semantic_query_terms)
+                    | set(tokenize_lexically(item.selected_text)),
+                    query_terms,
+                )
+            }
+        )
+        and (
+            not expected_sections
+            or section_topics_compatible(expected_sections, item.heading_path)
+        )
+        for item in evidence
+    )
+    strong_section_match = (
+        bool(set(query_terms) & heading_terms) or expected_section_match
+    )
+    if len(query_terms) > 1 and len(matched) < 2 and not strong_section_match:
+        failures.append("essential_concept_coverage_below_threshold")
+    if expected_sections and not expected_section_match:
+        failures.append("evidence_section_topic_mismatch")
+    if not aligned_direct_signal:
+        failures.append("direct_answer_signal_absent")
     if not content_present:
         failures.append("heading_only_or_empty_evidence")
     score_signal = top_score / (1.0 + top_score) if top_score > 0.0 else 0.0

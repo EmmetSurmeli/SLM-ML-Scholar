@@ -1,11 +1,68 @@
 from __future__ import annotations
 
+from localml_scholar.retrieval import Document, Section
+from localml_scholar.retrieval.documents import sha256_text
 from localml_scholar.scholarly import ScholarlyAnalysisPipeline
+from localml_scholar.scholarly.extraction import extract_claims
 
 
 def _analysis(index, source):
     document = next(item for item in index.documents if item.source_name == source)
     return ScholarlyAnalysisPipeline(index).analyze_paper(document.document_id)
+
+
+def test_claim_sentence_never_crosses_source_section_boundary() -> None:
+    first = "We propose a method"
+    second = " that works."
+    text = first + second
+    document_id = "doc-section-boundary"
+    document = Document(
+        document_id=document_id,
+        source_path="boundary.txt",
+        source_name="boundary.txt",
+        media_type="text/plain",
+        title="Boundary fixture",
+        text=text,
+        content_sha256=sha256_text(text),
+        byte_length=len(text.encode("utf-8")),
+        character_length=len(text),
+        metadata={},
+        sections=(
+            Section(
+                section_id="section-1",
+                document_id=document_id,
+                ordinal=0,
+                heading="First",
+                heading_path=("First",),
+                level=1,
+                text=first,
+                start_character=0,
+                end_character=len(first),
+                start_line=1,
+                end_line=1,
+            ),
+            Section(
+                section_id="section-2",
+                document_id=document_id,
+                ordinal=1,
+                heading="Second",
+                heading_path=("Second",),
+                level=1,
+                text=second,
+                start_character=len(first),
+                end_character=len(text),
+                start_line=1,
+                end_line=1,
+            ),
+        ),
+        parser_identifier="test-boundary-parser",
+    )
+
+    claims = extract_claims(document)
+
+    assert len(claims) == 1
+    assert claims[0].source_text == "We propose a method"
+    assert claims[0].citation.section_id == "section-1"
 
 
 def test_assumptions_claims_and_qualifiers(scholarly_index) -> None:

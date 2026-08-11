@@ -111,3 +111,80 @@ def test_version_1_2_1_grounded_answer_remains_loadable(tmp_path, monkeypatch):
     )
     monkeypatch.setattr(answer_serialization, "__version__", "1.2.2")
     assert answer_serialization.load_grounded_answer(path, index=index) == answer
+
+
+def test_version_1_2_3_artifacts_remain_supported(tmp_path, monkeypatch):
+    document = ingest_markdown(
+        "# Paper\n\n## Method\nTraining uses Adam.\n", source="paper.md"
+    )
+    monkeypatch.setitem(
+        RetrievalIndex.__init__.__kwdefaults__, "package_version", "1.2.3"
+    )
+    old_index = RetrievalIndex.build([document])
+    path = tmp_path / "version-1.2.3-index.json"
+    old_index.save(path)
+    monkeypatch.setitem(
+        RetrievalIndex.__init__.__kwdefaults__, "package_version", "1.2.4"
+    )
+    assert RetrievalIndex.load(path).index_sha256 == old_index.index_sha256
+    assert (3, "1.2.3") in TransformerTrainer.LEGACY_CHECKPOINT_IDENTITIES
+
+
+def test_version_1_2_4_artifacts_remain_supported(tmp_path, monkeypatch):
+    document = ingest_markdown(
+        "# Paper\n\n## Method\nTraining uses Adam.\n", source="paper.md"
+    )
+    monkeypatch.setitem(
+        RetrievalIndex.__init__.__kwdefaults__, "package_version", "1.2.4"
+    )
+    old_index = RetrievalIndex.build([document])
+    path = tmp_path / "version-1.2.4-index.json"
+    old_index.save(path)
+    monkeypatch.setitem(
+        RetrievalIndex.__init__.__kwdefaults__, "package_version", "1.2.5"
+    )
+    assert RetrievalIndex.load(path).index_sha256 == old_index.index_sha256
+    assert (3, "1.2.4") in TransformerTrainer.LEGACY_CHECKPOINT_IDENTITIES
+
+    answer = GroundedAnswerPipeline(old_index).answer(
+        "Which optimizer is used?", method="extractive"
+    )
+    monkeypatch.setattr(answer_serialization, "__version__", "1.2.4")
+    answer_path = answer_serialization.save_grounded_answer(
+        tmp_path / "answer-1.2.4.json", answer
+    )
+    monkeypatch.setattr(answer_serialization, "__version__", "1.2.5")
+    assert (
+        answer_serialization.load_grounded_answer(answer_path, index=old_index)
+        == answer
+    )
+
+
+def test_version_1_2_5_artifacts_remain_supported(tmp_path, monkeypatch):
+    document = ingest_markdown(
+        "# Paper\n\n## Method\nTraining uses Adam.\n", source="paper.md"
+    )
+    monkeypatch.setitem(
+        RetrievalIndex.__init__.__kwdefaults__, "package_version", "1.2.5"
+    )
+    old_index = RetrievalIndex.build([document])
+    path = tmp_path / "version-1.2.5-index.json"
+    old_index.save(path)
+    monkeypatch.setitem(
+        RetrievalIndex.__init__.__kwdefaults__, "package_version", "1.2.6"
+    )
+    assert RetrievalIndex.load(path).index_sha256 == old_index.index_sha256
+    assert (3, "1.2.5") in TransformerTrainer.LEGACY_CHECKPOINT_IDENTITIES
+
+    answer = GroundedAnswerPipeline(old_index).answer(
+        "Which optimizer is used?", method="extractive"
+    )
+    monkeypatch.setattr(answer_serialization, "__version__", "1.2.5")
+    answer_path = answer_serialization.save_grounded_answer(
+        tmp_path / "answer-1.2.5.json", answer
+    )
+    monkeypatch.setattr(answer_serialization, "__version__", "1.2.6")
+    assert (
+        answer_serialization.load_grounded_answer(answer_path, index=old_index)
+        == answer
+    )

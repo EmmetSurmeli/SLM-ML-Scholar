@@ -1,5 +1,13 @@
 # Codex review pipeline
 
+All five roles now receive the canonical policy vocabulary in
+`reviewer_reliability.py`, but retain separate inputs and responsibilities.
+The evidence critic does not grade answer prose; the answer critic does not
+grade retrieval rank; and the citation critic receives atomic claims and cited
+passages without answerer confidence or final state. Deterministic structural
+conflicts are supplied to the final adjudicator before semantic ambiguity is
+resolved.
+
 The autonomous curator requires a genuine structured Codex review provider.
 The default provider invokes the installed `codex exec` command with ephemeral,
 read-only execution, approval disabled, and a strict JSON output schema. It
@@ -21,6 +29,11 @@ suspended rather than silently substituting deterministic heuristics.
 5. **Final adjudicator** sees raw evidence, deterministic diagnostics, and the
    three focused critic records. It accepts, requests repair, rejects, or marks
    the example uncertain.
+
+New 1.2.4 reviewer outputs may include a typed `policy_outcome` and per-claim
+`claim_critiques`. The loader accepts legacy 1.2.3 records without rewriting
+them. Structural validation is mandatory but does not prove semantic support;
+the citation critic remains a separate semantic check.
 
 These are logically separated passes, not statistically independent models.
 Their input/output hashes, reviewer identity, version, structured results, and

@@ -48,6 +48,13 @@ from localml_scholar.retrieval.metrics import (
     recall_at_k,
     reciprocal_rank,
 )
+from localml_scholar.retrieval.section_inference import (
+    InferredHeading,
+    canonical_section_role,
+    infer_scholarly_headings,
+    rebuild_document_sections,
+    section_topics_compatible,
+)
 from localml_scholar.retrieval.semantic import (
     SemanticIndex,
     SemanticQueryProjection,
@@ -58,9 +65,11 @@ from localml_scholar.retrieval.semantic import (
     vocabulary_sha256,
 )
 from localml_scholar.retrieval.text import (
+    QUERY_STOPWORDS,
     LexicalTerm,
     LexicalTokenizerConfig,
     lexical_terms,
+    normalize_query_terms,
     tokenize_lexically,
 )
 
@@ -84,7 +93,9 @@ __all__ = [
     "ingest_plain_text",
     "LexicalTerm",
     "LexicalTokenizerConfig",
+    "QUERY_STOPWORDS",
     "lexical_terms",
+    "normalize_query_terms",
     "PageText",
     "precision_at_k",
     "recall_at_k",
@@ -92,6 +103,7 @@ __all__ = [
     "RetrievalEvaluation",
     "RetrievalIndex",
     "HybridRetrievalConfig",
+    "InferredHeading",
     "maximum_positive_normalization",
     "mean_relevant_rank",
     "ndcg_at_k",
@@ -109,6 +121,10 @@ __all__ = [
     "weighted_reranking_score",
     "build_tfidf_matrix",
     "canonicalize_svd_signs",
+    "canonical_section_role",
+    "infer_scholarly_headings",
+    "rebuild_document_sections",
+    "section_topics_compatible",
     "vocabulary_sha256",
     "validate_chunk_coverage",
     "chunk_document",

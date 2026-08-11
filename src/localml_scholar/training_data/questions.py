@@ -4,6 +4,10 @@ from __future__ import annotations
 
 from collections import Counter
 
+from localml_scholar.training_data.preflight import (
+    expected_answerability,
+    question_topic_eligible,
+)
 from localml_scholar.training_data.schemas import QuestionCandidate
 
 # This exact catalog is the Milestone 12A Attention-paper starter. Every entry is
@@ -131,6 +135,34 @@ ATTENTION_QUESTIONS: tuple[tuple[str, str], ...] = (
     ),
 )
 
+_ATTENTION_EXPECTED_SECTIONS: dict[str, tuple[str, ...]] = {
+    "metadata": ("abstract",),
+    "motivation": ("introduction",),
+    "method": ("architecture",),
+    "architecture": ("architecture",),
+    "experiment": ("experiments", "results"),
+    "result": ("results",),
+    "reproduction": ("training",),
+    "hyperparameter": ("training",),
+    "comparison": ("architecture", "results"),
+    "equation": ("architecture",),
+    "complexity": ("architecture",),
+    "interpretation": ("discussion", "conclusion"),
+    "critical_reasoning": ("results", "discussion"),
+    "limitation": ("discussion", "conclusion"),
+    "teaching": ("architecture",),
+    "derivation": ("architecture",),
+    "counterfactual": ("architecture",),
+}
+
+_ATTENTION_QUESTION_SECTIONS: dict[str, tuple[str, ...]] = {
+    "What does causal masking do?": ("Encoder and Decoder Stacks",),
+    "What does the feed-forward network do?": ("Position-wise Feed-Forward Networks",),
+    "What is scaled dot-product attention?": ("Scaled Dot-Product Attention",),
+    "What is multi-head attention?": ("Multi-Head Attention",),
+    "Why is positional encoding required?": ("Positional Encoding",),
+}
+
 _GENERIC_QUESTIONS: tuple[tuple[str, str, tuple[str, ...]], ...] = (
     ("Who wrote {title}?", "metadata", ("title",)),
     ("What is {title} trying to accomplish?", "metadata", ("abstract", "introduction")),
@@ -174,8 +206,16 @@ _GENERIC_QUESTIONS: tuple[tuple[str, str, tuple[str, ...]], ...] = (
     ("Why should the method work?", "intuition", ("method",)),
     ("What is the paper's core insight?", "intuition", ("abstract", "method")),
     ("Derive the key equation and label inferred steps.", "derivation", ("method",)),
-    ("What is the computational complexity?", "complexity", ("method", "experiments")),
-    ("What is the memory complexity?", "complexity", ("method", "experiments")),
+    (
+        "What is the computational complexity?",
+        "complexity",
+        ("method", "analysis", "experiments"),
+    ),
+    (
+        "What is the memory complexity?",
+        "complexity",
+        ("method", "analysis", "experiments"),
+    ),
     (
         "What inductive bias does the method introduce?",
         "critical_reasoning",
@@ -218,7 +258,7 @@ _GENERIC_QUESTIONS: tuple[tuple[str, str, tuple[str, ...]], ...] = (
     (
         "Which limitations do the authors state?",
         "limitation",
-        ("limitations", "conclusion"),
+        ("limitations", "discussion", "conclusion"),
     ),
     (
         "Which limitations can be inferred from experimental scope?",
@@ -366,6 +406,7 @@ def generate_paper_questions(
     *,
     count: int = 60,
     section_titles: tuple[str, ...] = (),
+    paper_text: str | None = None,
 ) -> tuple[QuestionCandidate, ...]:
     """Generate 40--80 deterministic, untrusted candidates for one paper."""
     if not isinstance(paper_id, str) or not paper_id.strip():
@@ -378,9 +419,18 @@ def generate_paper_questions(
         isinstance(item, str) for item in section_titles
     ):
         raise TypeError("section_titles must be a tuple of strings.")
+    if paper_text is not None and not isinstance(paper_text, str):
+        raise TypeError("paper_text must be text or None.")
     if "attention is all you need" in title.casefold():
         templates = tuple(
-            (question, kind, ()) for question, kind in ATTENTION_QUESTIONS
+            (
+                question,
+                kind,
+                _ATTENTION_QUESTION_SECTIONS.get(
+                    question, _ATTENTION_EXPECTED_SECTIONS.get(kind, ())
+                ),
+            )
+            for question, kind in ATTENTION_QUESTIONS
         )
     else:
         grouped: dict[str, list[tuple[str, str, tuple[str, ...]]]] = {}
@@ -395,12 +445,24 @@ def generate_paper_questions(
             offset += 1
         templates = tuple(balanced)
     candidates = []
-    for question, kind, sections in templates[:count]:
+    suppressed = 0
+    for question, kind, sections in templates:
+        rendered = question.format(title=title.strip())
+        if paper_text is not None and not question_topic_eligible(
+            kind,
+            rendered,
+            paper_text=paper_text,
+            headings=section_titles,
+            expected_sections=sections,
+        ):
+            suppressed += 1
+            continue
         candidates.append(
             QuestionCandidate.create(
                 paper_ids=(paper_id,),
-                question=question.format(title=title.strip()),
+                question=rendered,
                 question_type=kind,
+                expected_answerability=expected_answerability(kind),
                 expected_sections=sections,
                 review_status="proposed",
                 metadata={
@@ -408,9 +470,13 @@ def generate_paper_questions(
                     "generator": "paper_question_templates_v1",
                     "trusted_gold": False,
                     "paper_section_titles": list(section_titles),
+                    "topic_preflight_applied": paper_text is not None,
+                    "templates_suppressed_before_candidate": suppressed,
                 },
             )
         )
+        if len(candidates) >= count:
+            break
     return tuple(candidates)
 
 
@@ -432,6 +498,7 @@ def generate_prompt_variations(
             paper_ids=candidate.paper_ids,
             question=prompt,
             question_type=candidate.question_type,
+            expected_answerability=candidate.expected_answerability,
             expected_sections=candidate.expected_sections,
             required_concepts=candidate.required_concepts,
             prohibited_claims=candidate.prohibited_claims,

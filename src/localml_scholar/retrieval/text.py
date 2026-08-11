@@ -11,6 +11,84 @@ _TERM_PATTERN = re.compile(
     flags=re.UNICODE,
 )
 
+# Query-only normalization. Document indexing intentionally keeps every lexical
+# token so phrase/source diagnostics remain lossless; queries and all downstream
+# coverage checks share this exact stopword policy.
+QUERY_STOPWORDS = frozenset(
+    {
+        "a",
+        "an",
+        "and",
+        "approaches",
+        "are",
+        "as",
+        "at",
+        "authors",
+        "be",
+        "been",
+        "by",
+        "did",
+        "do",
+        "does",
+        "for",
+        "from",
+        "had",
+        "has",
+        "have",
+        "how",
+        "identify",
+        "in",
+        "is",
+        "it",
+        "its",
+        "long",
+        "main",
+        "most",
+        "of",
+        "on",
+        "or",
+        "paper",
+        "paper's",
+        "prior",
+        "proposed",
+        "reason",
+        "section",
+        "simply",
+        "state",
+        "step",
+        "steps",
+        "strongest",
+        "support",
+        "supports",
+        "that",
+        "the",
+        "their",
+        "this",
+        "to",
+        "take",
+        "use",
+        "used",
+        "uses",
+        "using",
+        "was",
+        "were",
+        "what",
+        "when",
+        "where",
+        "which",
+        "who",
+        "why",
+        "will",
+        "with",
+        "would",
+    }
+)
+
+_QUERY_ALIASES = {
+    "idea": "method",
+    "skeptical": "limitations",
+}
+
 
 @dataclass(frozen=True)
 class LexicalTokenizerConfig:
@@ -97,3 +175,19 @@ def tokenize_lexically(
 ) -> tuple[str, ...]:
     """Return normalized retrieval terms only."""
     return tuple(term.term for term in lexical_terms(text, config))
+
+
+def normalize_query_terms(
+    text: str,
+    config: LexicalTokenizerConfig | None = None,
+) -> tuple[str, ...]:
+    """Return unique non-stop query terms using the canonical lexical policy.
+
+    If a query consists entirely of stopwords, unique lexical terms are retained
+    so callers can produce an explicit low-information diagnostic rather than an
+    invalid empty query.
+    """
+    terms = tokenize_lexically(text, config)
+    unique = tuple(dict.fromkeys(_QUERY_ALIASES.get(term, term) for term in terms))
+    meaningful = tuple(term for term in unique if term not in QUERY_STOPWORDS)
+    return meaningful or unique
